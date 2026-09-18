@@ -3,8 +3,9 @@
 Node + TypeScript + MongoDB backend for the GoSaath commute app, the future
 University Admin panel and the Super Admin panel.
 
-**Phases 0–1 complete.** Foundation plus the full data layer: 17 collections,
-every index, and an idempotent seed. No HTTP endpoints for the domain yet —
+**Phases 0–1 complete, plus the email service.** Foundation, the full data
+layer (17 collections, every index, idempotent seed), and provider-agnostic
+email ready for Phase 2's OTP flow. No HTTP endpoints for the domain yet —
 see [Build order](#build-order).
 
 ## Quick start
@@ -111,6 +112,39 @@ Distance is Haversine, not routed. A routing API would be more accurate and
 would also cost a network call per candidate on the matching hot path; at a
 three-kilometre threshold both rank neighbourhoods the same way.
 
+### Email
+
+Domain code depends on `EmailService` and asks for "send a verification code",
+never "POST to Resend". Every message the product sends is enumerated on that
+interface, so no route can compose arbitrary email out of user input, and no
+service holds an API key.
+
+| Provider | When |
+|---|---|
+| `console` | Development. Prints the message; **rejected outside development** |
+| `resend` | Real delivery |
+
+`console` is refused in staging and production by config validation, because a
+deployment that silently swallows every verification email is indistinguishable
+from one where nobody can sign up.
+
+Resend is called over plain `fetch`, not the SDK. Sending is one authenticated
+POST, and the official client does not expose a per-request timeout — the one
+control that matters, since a hung provider would otherwise hold a registration
+open until the server's 20s ceiling. `AbortController` gives an exact bound and
+drops a dependency from the path of every account created.
+
+- Retries only 408/429/5xx, three attempts, exponential backoff. A 401 from a
+  bad key fails identically every time, so it is raised immediately rather than
+  retried three times and buried
+- An `Idempotency-Key` derived from the payload means a retry after a lost
+  response cannot deliver two codes
+- Codes never appear in a subject line: subjects render on a lock screen
+- Names and admin-written reasons are HTML-escaped
+
+To switch on real delivery: verify a domain in Resend, then set
+`EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, and an `EMAIL_FROM` on that domain.
+
 ### Error handling
 
 Every error becomes one typed `AppError` and one envelope:
@@ -201,6 +235,7 @@ Each phase ends with `npm run verify` passing.
 | **0** | **Foundation** | **Done** |
 | **1** | **Models, indexes, seed** | **Done** — 29 tests |
 | 2 | Auth: register, OTP, verify, login, restore, reset | Brute-force tests |
+| — | *Email service (done early — Phase 2 needs it)* | 17 tests |
 | 3 | me, institutions, campuses, areas, preferences, vehicles | Mass-assignment tests |
 | 4 | Commutes, RideInstance generation, attendance, exceptions | Job twice → one row |
 | 5 | Matching, search, nearby, blocks both directions | `explain()` shows IXSCAN |

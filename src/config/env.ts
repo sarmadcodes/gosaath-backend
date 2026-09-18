@@ -13,6 +13,20 @@ loadDotenv();
 
 const Environment = z.enum(["development", "test", "staging", "production"]);
 
+/**
+ * An optional value that may be present but blank.
+ *
+ * `.env` files carry empty keys as documentation — `RESEND_API_KEY=` says "this
+ * exists, fill it in". Zod sees a present empty string and fails `.min()`,
+ * so without this the documented default in .env.example refuses to boot.
+ */
+const optionalSecret = (minLength: number) =>
+  z.preprocess(
+    (value) =>
+      typeof value === "string" && value.trim() === "" ? undefined : value,
+    z.string().min(minLength).optional(),
+  );
+
 const schema = z
   .object({
     NODE_ENV: Environment.default("development"),
@@ -43,9 +57,32 @@ const schema = z
     REQUEST_TIMEOUT_MS: z.coerce.number().int().default(20_000),
 
     /** Minimum length is a guard against a placeholder reaching production. */
-    JWT_SECRET: z.string().min(32).optional(),
+    JWT_SECRET: optionalSecret(32),
+
+    // --- Email ------------------------------------------------------------
+    /**
+     * "resend" sends real mail. "console" writes the message to the log and
+     * is the default in development, so the OTP flow is fully exercisable
+     * without a provider or a real inbox.
+     */
+    EMAIL_PROVIDER: z.enum(["resend", "console"]).default("console"),
+    RESEND_API_KEY: optionalSecret(1),
+    /** Must be a verified sender on the Resend domain. */
+    EMAIL_FROM: z.string().default("GoSaath <onboarding@resend.dev>"),
+    EMAIL_REPLY_TO: optionalSecret(1),
+    /** Hard ceiling on the provider call. Registration waits on this. */
+    EMAIL_TIMEOUT_MS: z.coerce.number().int().min(1000).max(30_000).default(8_000),
   })
   .superRefine((value, ctx) => {
+    // A provider selected without its credential fails at the first send,
+    // which in practice means the first user to register. Fail at boot.
+    if (value.EMAIL_PROVIDER === "resend" && !value.RESEND_API_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["RESEND_API_KEY"],
+        message: "RESEND_API_KEY is required when EMAIL_PROVIDER is resend",
+      });
+    }
     // Secrets are optional while the auth module does not exist yet, but must
     // never be optional once this runs anywhere real.
     if (value.NODE_ENV === "production" || value.NODE_ENV === "staging") {
@@ -54,6 +91,15 @@ const schema = z
           code: z.ZodIssueCode.custom,
           path: ["JWT_SECRET"],
           message: "JWT_SECRET is required outside development",
+        });
+      }
+      if (value.EMAIL_PROVIDER === "console") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["EMAIL_PROVIDER"],
+          message:
+            "EMAIL_PROVIDER must be a real provider outside development — " +
+            "console would silently swallow every verification email",
         });
       }
       if (!value.CORS_ORIGINS.trim()) {
