@@ -3,9 +3,10 @@
 Node + TypeScript + MongoDB backend for the GoSaath commute app, the future
 University Admin panel and the Super Admin panel.
 
-**Phases 0–3 complete.** Foundation, data layer, email, authentication, and
-the account surface: profile, vehicles, preferences, institutions and areas.
-The commute engine and matching come next — see [Build order](#build-order).
+**Phases 0–4 complete.** Foundation, data layer, email, authentication, the
+account surface, and the commute engine — templates, per-day schedules,
+rolling instance generation and day-level exceptions. Matching comes next —
+see [Build order](#build-order).
 
 ## Quick start
 
@@ -222,6 +223,43 @@ Institution search escapes the query before it becomes a regex. Unescaped,
 `.*` returns everything and a backtracking pattern pins the CPU — a denial of
 service from a search box.
 
+### The commute engine
+
+```
+Commute  ──expands to──▶  RideInstance  ──has many──▶  Attendance
+(template, no dates)      (one date)                   (who is on it)
+```
+
+Three collections, never collapsed. Hanging riders off the Commute makes "not
+this Thursday" impossible to say without silently rewriting every other week.
+
+**Generation is idempotent by construction**, not by checking first. The write
+is an upsert keyed on `{commuteId, date}` against a unique index — a
+check-then-insert has a window where every racing worker sees nothing and every
+one inserts. A test runs ten concurrent generators and asserts one row per day.
+
+Regeneration uses `$setOnInsert` for `status` and `seatsTaken`, so it cannot
+revive a cancelled day or wipe the count of people already accepted. Only the
+fields that genuinely come from the template are overwritten.
+
+**Dates are anchored to local midnight in Karachi** (19:00 UTC the day before),
+which is what makes a date a single value rather than a range — and therefore
+what makes `{commuteId, date}` usable as a key. `src/utils/dates.ts` uses an
+explicit timezone rather than the host's, so a container ignoring `TZ` cannot
+shift everyone's commute.
+
+**Day-level exceptions target the next occurrence of a weekday**, not "this
+week's". On a Friday, "skip Monday" means the Monday ahead; scoping to the
+calendar week makes the request fail for the second half of every week.
+
+`setUnavailable` marks instances `noDriver` — not `cancelled`, which would tell
+passengers the ride is off when somebody else could still cover it — and moves
+passengers to `pending` rather than removing them. The template stays active
+and unchanged throughout.
+
+A schedule edit rebuilds only days **strictly after today**. Today's ride is
+one people may already be travelling to.
+
 ### Error handling
 
 Every error becomes one typed `AppError` and one envelope:
@@ -314,7 +352,7 @@ Each phase ends with `npm run verify` passing.
 | — | *Email service (Resend + console)* | **Done** — 17 tests |
 | **2** | **Auth: register, OTP, verify, login, restore, reset** | **Done** — 36 tests |
 | **3** | **me, institutions, campuses, areas, preferences, vehicles** | **Done** — 31 tests |
-| 4 | Commutes, RideInstance generation, attendance, exceptions | Job twice → one row |
+| **4** | **Commutes, RideInstance generation, attendance, exceptions** | **Done** — 28 tests |
 | 5 | Matching, search, nearby, blocks both directions | `explain()` shows IXSCAN |
 | 6 | Seat requests, accept/decline | 10 concurrent vs 2 seats |
 | 7 | Notifications, push tokens, delivery job | Delivery never blocks response |

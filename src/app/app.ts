@@ -15,6 +15,7 @@ import {
   meRoutes,
   publicInstitutionRoutes,
 } from "../modules/users/me.routes.js";
+import { commuteRoutes } from "../modules/commutes/commute.routes.js";
 
 /**
  * Builds the application without listening.
@@ -115,6 +116,7 @@ export async function buildApp(
       // Public: registration needs the institution picker before sign-in.
       await api.register(publicInstitutionRoutes);
       await api.register(meRoutes);
+      await api.register(commuteRoutes);
     },
     { prefix: "/api/v1" },
   );
