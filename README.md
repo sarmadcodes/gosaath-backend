@@ -3,9 +3,9 @@
 Node + TypeScript + MongoDB backend for the GoSaath commute app, the future
 University Admin panel and the Super Admin panel.
 
-**Phase 0 complete.** The foundation runs: config, logging, error handling,
-database pool, health, graceful shutdown, and the vendored API contract.
-No domain endpoints yet — see [Build order](#build-order).
+**Phases 0–1 complete.** Foundation plus the full data layer: 17 collections,
+every index, and an idempotent seed. No HTTP endpoints for the domain yet —
+see [Build order](#build-order).
 
 ## Quick start
 
@@ -29,6 +29,8 @@ database is reachable, which is the intended behaviour, not a failure.
 | `npm run contract:check` | Fail if the vendored contract drifted from the app |
 | `npm run contract:sync` | Re-copy the contract from the app |
 | `npm run check:shutdown` | SIGTERM path (**Linux/macOS only** — see below) |
+| `npm run db:indexes` | Create every declared index. **A deploy step** |
+| `npm run db:seed` | Areas, SZABIST, Clifton, configuration. Idempotent |
 
 ## Architecture
 
@@ -69,6 +71,45 @@ Re-typing those types here by hand is how a field quietly becomes optional on
 one side and required on the other, with nothing catching it until a screen
 renders blank. The client is the source of truth for shapes; this repo serves
 them.
+
+### Data layer
+
+`autoIndex` and `autoCreate` are **off**. Indexes are built by
+`npm run db:indexes` as an explicit deploy step — leaving it on means every
+process races to build them at boot, and a production deploy silently blocks
+on a foreground build.
+
+Three collections stay strictly separate: **Commute** (recurring template, no
+dates) → **RideInstance** (one calendar date) → **Attendance** (one person on
+one instance). Collapsing them makes "I can't drive this Thursday"
+inexpressible without editing the template, which silently changes every other
+week too.
+
+Unique indexes are correctness, not tuning:
+
+| Index | Guarantees |
+|---|---|
+| `users.email` | One account per address, case-insensitive |
+| `rideInstances {commuteId, date}` | Generation is idempotent across racing workers |
+| `attendance {rideInstanceId, userId}` | No double seat from a retried request |
+| `seatRequests {rideInstanceId, requesterId}` | One outstanding request per ride |
+| `blocks {blockerId, blockedId}` | No duplicate block rows |
+| `campuses {institutionId, name}` | No two "Main Campus" rows |
+
+Seats live on the **RideInstance**, not the Commute: a driver with a full car
+on Monday may have space on Wednesday.
+
+### Area centroids
+
+Areas carry a centroid; users never do. That is public geography about a
+neighbourhood — roughly where Gulshan-e-Iqbal sits — and is categorically
+different from storing where a person is. It exists for one job: deciding
+whether two areas are within `NEARBY_RADIUS_KM`. It is never serialised to a
+client, and a test asserts the user schema has no coordinate field.
+
+Distance is Haversine, not routed. A routing API would be more accurate and
+would also cost a network call per candidate on the matching hot path; at a
+three-kilometre threshold both rank neighbourhoods the same way.
 
 ### Error handling
 
@@ -143,8 +184,13 @@ commute by five hours.
 2. **2 moderate npm advisories**, both in `@vitest/mocker` → dev-only, never
    shipped. The offered fix downgrades vitest and reintroduces the esbuild
    advisories, so it is deliberately not applied.
-3. **No MongoDB configured locally.** Everything past Phase 1 needs one —
-   Atlas free tier or Docker.
+3. **The Atlas credential was pasted into a chat.** It works, and it is in
+   `.env` which is gitignored — but it should be rotated in Atlas before this
+   goes anywhere real, and the production credential should never be typed
+   into a chat window at all.
+4. **Tests run against a separate `gosaath_test` database**, forced in
+   `vitest.config.ts` rather than read from `.env`, so no run can touch real
+   data even if the environment says otherwise.
 
 ## Build order
 
@@ -153,7 +199,7 @@ Each phase ends with `npm run verify` passing.
 | Phase | Deliverable | Gate |
 |---|---|---|
 | **0** | **Foundation** | **Done** |
-| 1 | Models, indexes, seed (areas, SZABIST, Clifton) | Indexes asserted in a test |
+| **1** | **Models, indexes, seed** | **Done** — 29 tests |
 | 2 | Auth: register, OTP, verify, login, restore, reset | Brute-force tests |
 | 3 | me, institutions, campuses, areas, preferences, vehicles | Mass-assignment tests |
 | 4 | Commutes, RideInstance generation, attendance, exceptions | Job twice → one row |

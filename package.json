@@ -16,7 +16,9 @@
     "contract:check": "tsx scripts/contract.ts check",
     "contract:sync": "tsx scripts/contract.ts sync",
     "check:shutdown": "node tests/manual/shutdown-check.mjs",
-    "verify": "npm run contract:check && npm run typecheck && npm test && npm run build"
+    "verify": "npm run contract:check && npm run typecheck && npm test && npm run build",
+    "db:indexes": "tsx scripts/ensure-indexes.ts",
+    "db:seed": "tsx scripts/seed.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
