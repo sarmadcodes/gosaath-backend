@@ -51,6 +51,19 @@ const userSchema = new Schema(
       default: "none",
     },
 
+    /**
+     * Proof submitted for the optional badge.
+     *
+     * select:false — it is an identity document, and it has no business
+     * appearing in any response that merely happens to load a user. Only the
+     * verification queue asks for it, explicitly.
+     */
+    badgeDocumentUrl: { type: String, default: null, select: false },
+    badgeRequestedAt: { type: Date, default: null },
+    badgeReviewedAt: { type: Date, default: null },
+    badgeReviewedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    badgeRejectionReason: { type: String, default: null },
+
     additionalInstitutionIds: {
       type: [{ type: Schema.Types.ObjectId, ref: "Institution" }],
       default: [],

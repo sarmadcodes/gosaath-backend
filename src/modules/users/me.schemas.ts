@@ -1,0 +1,53 @@
+import { z } from "zod";
+
+/**
+ * Request validation for the authenticated user's own record.
+ *
+ * The contract types `me.update` as `Partial<User>`, which includes `role`,
+ * `institutionId`, `campusId` and `badgeStatus`. Taken literally that is a
+ * privilege-escalation endpoint, so the server decides what is writable here
+ * rather than trusting the shape.
+ */
+
+const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, "Not a valid id");
+
+/**
+ * The only fields a member may change about themselves.
+ *
+ * Everything else on the record is set at registration or by an admin.
+ * `.strict()` means an unknown or forbidden key is a 400 rather than something
+ * quietly dropped — silent dropping hides the attempt, and an attacker probing
+ * for what sticks learns nothing from a 200 that ignored them.
+ */
+export const updateMeSchema = z
+  .object({
+    name: z.string().trim().min(2).max(120).optional(),
+    phone: z
+      .string()
+      .trim()
+      .min(10)
+      .max(20)
+      .regex(/^(\+?92|0)?[\s-]?3\d{2}[\s-]?\d{7}$/, "Enter a valid mobile number")
+      .optional(),
+    /** Area only. There is no address, latitude or longitude to change. */
+    areaId: objectId.optional(),
+    photoUrl: z.string().url().max(2000).nullish(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "Nothing to update",
+  });
+
+export const setPhotoSchema = z
+  .object({ uri: z.string().url().max(2000).nullable() })
+  .strict();
+
+export const requestBadgeSchema = z
+  .object({ documentUri: z.string().url().max(2000) })
+  .strict();
+
+export const institutionIdSchema = z
+  .object({ institutionId: objectId })
+  .strict();
+
+export type UpdateMeBody = z.infer<typeof updateMeSchema>;

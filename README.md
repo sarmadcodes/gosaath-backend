@@ -3,10 +3,9 @@
 Node + TypeScript + MongoDB backend for the GoSaath commute app, the future
 University Admin panel and the Super Admin panel.
 
-**Phases 0–2 complete.** Foundation, data layer, email, and authentication.
-An account can be created, verified, signed in, refreshed and reset against a
-real database. Domain endpoints (commutes, matching, rides) come next — see
-[Build order](#build-order).
+**Phases 0–3 complete.** Foundation, data layer, email, authentication, and
+the account surface: profile, vehicles, preferences, institutions and areas.
+The commute engine and matching come next — see [Build order](#build-order).
 
 ## Quick start
 
@@ -195,6 +194,34 @@ botnet.
 Resetting a password revokes every session, since the reset may be a response
 to a compromise.
 
+### The account surface
+
+`GET/PATCH /me`, `PUT /me/photo`, `POST /me/badge`, `/me/institutions`,
+`/vehicles`, `/preferences`, `/areas`, and public `/institutions`.
+
+**`me.update` is the mass-assignment gate.** The contract types it as
+`Partial<User>`, which includes `role`, `institutionId`, `campusId` and
+`badgeStatus` — taken literally, a privilege-escalation endpoint. Four fields
+are writable (`name`, `phone`, `areaId`, `photoUrl`) and anything else is a
+**400, not a silently ignored key**. Silent dropping hides the attempt, and an
+attacker probing for what sticks learns nothing from a 200 that did nothing.
+
+Fields are assigned one by one, never `user.set(patch)` — that is one schema
+change away from letting a wider body through.
+
+**Ownership is a filter, not a check.** Vehicle queries carry `ownerId` in the
+query itself rather than loading then comparing, so somebody else's row cannot
+match at all. A wrong id and a missing one both return **404**: a 403 would
+confirm the id is real and owned by a particular person.
+
+**Areas never return a centroid**, and the badge document is `select: false` —
+it is an identity document and has no business in a response that merely
+happens to load a user.
+
+Institution search escapes the query before it becomes a regex. Unescaped,
+`.*` returns everything and a backtracking pattern pins the CPU — a denial of
+service from a search box.
+
 ### Error handling
 
 Every error becomes one typed `AppError` and one envelope:
@@ -286,7 +313,7 @@ Each phase ends with `npm run verify` passing.
 | **1** | **Models, indexes, seed** | **Done** |
 | — | *Email service (Resend + console)* | **Done** — 17 tests |
 | **2** | **Auth: register, OTP, verify, login, restore, reset** | **Done** — 36 tests |
-| 3 | me, institutions, campuses, areas, preferences, vehicles | Mass-assignment tests |
+| **3** | **me, institutions, campuses, areas, preferences, vehicles** | **Done** — 31 tests |
 | 4 | Commutes, RideInstance generation, attendance, exceptions | Job twice → one row |
 | 5 | Matching, search, nearby, blocks both directions | `explain()` shows IXSCAN |
 | 6 | Seat requests, accept/decline | 10 concurrent vs 2 seats |

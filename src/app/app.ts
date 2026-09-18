@@ -11,6 +11,10 @@ import { logger } from "../utils/logger.js";
 import { registerErrorHandler } from "../middleware/error-handler.js";
 import { healthRoutes } from "../modules/health/health.routes.js";
 import { authRoutes } from "../modules/auth/auth.routes.js";
+import {
+  meRoutes,
+  publicInstitutionRoutes,
+} from "../modules/users/me.routes.js";
 
 /**
  * Builds the application without listening.
@@ -108,6 +112,9 @@ export async function buildApp(
         data: { service: "gosaath-backend", version: "v1" },
       }));
       await api.register(authRoutes, { prefix: "/auth" });
+      // Public: registration needs the institution picker before sign-in.
+      await api.register(publicInstitutionRoutes);
+      await api.register(meRoutes);
     },
     { prefix: "/api/v1" },
   );

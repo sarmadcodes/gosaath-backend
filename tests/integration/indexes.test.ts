@@ -144,12 +144,34 @@ describe("privacy", () => {
     expect((path as unknown as { options: { select?: boolean } }).options.select).toBe(false);
   });
 
-  it("has no rating field on any model", async () => {
-    const models = [UserModel, InstitutionModel, CampusModel, AreaModel];
-    for (const Model of models) {
-      const paths = Object.keys(Model.schema.paths).join(" ").toLowerCase();
-      for (const forbidden of ["rating", "stars", "review", "reputation", "score"]) {
-        expect(paths.includes(forbidden), `${Model.modelName}.${forbidden}`).toBe(false);
+  it("has no rating field on any model", () => {
+    // Rule 1: no ratings, stars, reviews or reputation. Anywhere, ever.
+    //
+    // Matched on whole camelCase words rather than substrings. A substring
+    // check flags `badgeReviewedAt` — which is moderation of the optional
+    // badge, not a review of a person — and a test that cries wolf gets
+    // weakened or deleted the first time it blocks a legitimate field.
+    const FORBIDDEN = new Set([
+      "rating", "ratings",
+      "star", "stars",
+      "review", "reviews",
+      "reputation", "reputations",
+      "score", "scores",
+    ]);
+
+    const words = (path: string) =>
+      path.split(/[^A-Za-z]+/).flatMap((part) =>
+        part.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(" "),
+      );
+
+    for (const Model of [UserModel, InstitutionModel, CampusModel, AreaModel]) {
+      for (const path of Object.keys(Model.schema.paths)) {
+        for (const word of words(path)) {
+          expect(
+            FORBIDDEN.has(word),
+            `${Model.modelName}.${path} looks like a rating field`,
+          ).toBe(false);
+        }
       }
     }
   });
