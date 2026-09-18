@@ -3,10 +3,10 @@
 Node + TypeScript + MongoDB backend for the GoSaath commute app, the future
 University Admin panel and the Super Admin panel.
 
-**Phases 0–1 complete, plus the email service.** Foundation, the full data
-layer (17 collections, every index, idempotent seed), and provider-agnostic
-email ready for Phase 2's OTP flow. No HTTP endpoints for the domain yet —
-see [Build order](#build-order).
+**Phases 0–2 complete.** Foundation, data layer, email, and authentication.
+An account can be created, verified, signed in, refreshed and reset against a
+real database. Domain endpoints (commutes, matching, rides) come next — see
+[Build order](#build-order).
 
 ## Quick start
 
@@ -145,6 +145,56 @@ drops a dependency from the path of every account created.
 To switch on real delivery: verify a domain in Resend, then set
 `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, and an `EMAIL_FROM` on that domain.
 
+### Authentication
+
+`POST /api/v1/auth/` — `register`, `verify-otp`, `resend-otp`, `login`,
+`password-reset/request`, `password-reset`, `refresh`, `restore`, `logout`.
+
+**Two tokens, not one.** The access token is a short-lived JWT verified by
+signature alone, so an authenticated request costs no database read. The
+refresh token is an opaque random string backed by a row, so it can actually be
+revoked. A single long-lived token would mean either a lookup on every request
+or no way to sign anyone out.
+
+`AuthSession.token` in the client contract is the **refresh** token. The app
+stores one value and calls `restore()` on launch; the HTTP client exchanges it
+for an access token held in memory. That keeps a long-lived credential out of
+every request header without changing the contract or any screen.
+
+**Refresh tokens rotate, and reuse is treated as theft.** Each refresh mints a
+new token and retires the old one. If a retired token is presented again, the
+legitimate device would have been holding the newer one — so the whole chain is
+revoked and both parties are signed out. We cannot tell the thief from the
+victim, and leaving it would hand an attacker a working session indefinitely.
+
+**Nothing distinguishes an account that exists from one that does not.**
+
+| Path | Behaviour |
+|---|---|
+| Register an existing address | Identical response to a fresh signup; the real owner gets an email explaining |
+| Login: wrong password / no account / unverified / suspended | One message, one status |
+| Login for an unknown address | Still runs a hash, so timing does not reveal it |
+| Password reset | 204 whether or not the address exists |
+| OTP: wrong / expired / never issued | One message |
+
+**OTPs.** Six digits is only ~20 bits, so the code is not the defence —
+Argon2id at rest, a 10-minute expiry, 5 wrong guesses before the challenge is
+**deleted** rather than throttled (throttling lets an attacker simply wait), 5
+sends per challenge, a 60-second resend cooldown, and one live challenge per
+address so several valid codes cannot be farmed at once.
+
+**Passwords.** Argon2id at OWASP's baseline (19 MiB, t=2, p=1) — memory cost is
+what resists GPU cracking. Minimum 12 characters with no composition rules:
+length beats character classes, and `P@ss1!` satisfies most rule sets while
+falling to a dictionary in seconds.
+
+Lockout is tracked per address **and** per IP. Per address alone lets one
+attacker lock every account they can name; per IP alone is defeated by a
+botnet.
+
+Resetting a password revokes every session, since the reset may be a response
+to a compromise.
+
 ### Error handling
 
 Every error becomes one typed `AppError` and one envelope:
@@ -233,9 +283,9 @@ Each phase ends with `npm run verify` passing.
 | Phase | Deliverable | Gate |
 |---|---|---|
 | **0** | **Foundation** | **Done** |
-| **1** | **Models, indexes, seed** | **Done** — 29 tests |
-| 2 | Auth: register, OTP, verify, login, restore, reset | Brute-force tests |
-| — | *Email service (done early — Phase 2 needs it)* | 17 tests |
+| **1** | **Models, indexes, seed** | **Done** |
+| — | *Email service (Resend + console)* | **Done** — 17 tests |
+| **2** | **Auth: register, OTP, verify, login, restore, reset** | **Done** — 36 tests |
 | 3 | me, institutions, campuses, areas, preferences, vehicles | Mass-assignment tests |
 | 4 | Commutes, RideInstance generation, attendance, exceptions | Job twice → one row |
 | 5 | Matching, search, nearby, blocks both directions | `explain()` shows IXSCAN |

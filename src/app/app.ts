@@ -10,6 +10,7 @@ import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
 import { registerErrorHandler } from "../middleware/error-handler.js";
 import { healthRoutes } from "../modules/health/health.routes.js";
+import { authRoutes } from "../modules/auth/auth.routes.js";
 
 /**
  * Builds the application without listening.
@@ -18,7 +19,22 @@ import { healthRoutes } from "../modules/health/health.routes.js";
  * without binding a port — which is what makes the integration suite able to
  * run in parallel later.
  */
-export async function buildApp(): Promise<FastifyInstance> {
+export type BuildOptions = {
+  /**
+   * Rate limiting, on by default.
+   *
+   * Most integration tests share one IP and would exhaust the auth limits
+   * within a few cases, so they turn it off. The limits themselves are still
+   * covered — by tests that build an app with this left on and assert the
+   * throttling actually happens.
+   */
+  rateLimit?: boolean;
+};
+
+export async function buildApp(
+  options: BuildOptions = {},
+): Promise<FastifyInstance> {
+  const rateLimitEnabled = options.rateLimit ?? true;
   const app = Fastify({
     // Narrowed to the interface Fastify documents. Passing the concrete pino
     // type re-parameterises every FastifyInstance generic downstream, so each
@@ -69,14 +85,15 @@ export async function buildApp(): Promise<FastifyInstance> {
   // A global floor only. Auth and other sensitive routes get their own,
   // much stricter limits where they are defined.
   await app.register(rateLimit, {
-    global: true,
+    global: rateLimitEnabled,
     max: 300,
     timeWindow: "1 minute",
     // Per account once sessions exist; per IP until then.
     keyGenerator: (request) => request.ip,
     // Health checks must never be throttled: a rate-limited readiness probe
     // reads as an outage and takes the instance out.
-    allowList: (request) => request.url.startsWith("/health"),
+    allowList: (request) =>
+      !rateLimitEnabled || request.url.startsWith("/health"),
   });
 
   registerErrorHandler(app);
@@ -90,6 +107,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       api.get("/", async () => ({
         data: { service: "gosaath-backend", version: "v1" },
       }));
+      await api.register(authRoutes, { prefix: "/auth" });
     },
     { prefix: "/api/v1" },
   );

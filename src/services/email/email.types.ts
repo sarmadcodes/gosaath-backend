@@ -50,6 +50,20 @@ export interface EmailService {
     expiresInMinutes: number;
   }): Promise<EmailResult>;
 
+  /**
+   * Sent when somebody tries to register an address that already has a
+   * verified account.
+   *
+   * The registration response is deliberately identical to a fresh signup, so
+   * the form cannot be used to discover accounts. This email is what stops
+   * that silence from being unhelpful — and it reaches the real owner of the
+   * address rather than whoever typed it in.
+   */
+  sendExistingAccountNotice(input: {
+    to: string;
+    name: string;
+  }): Promise<EmailResult>;
+
   sendBadgeDecision(input: {
     to: string;
     name: string;

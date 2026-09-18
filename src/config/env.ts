@@ -59,6 +59,20 @@ const schema = z
     /** Minimum length is a guard against a placeholder reaching production. */
     JWT_SECRET: optionalSecret(32),
 
+    // --- Auth -------------------------------------------------------------
+    /** Short. A stolen access token should stop working quickly. */
+    ACCESS_TOKEN_TTL_MIN: z.coerce.number().int().min(1).max(1440).default(15),
+    /** Long: this is what keeps somebody signed in between app launches. */
+    REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(365).default(60),
+    OTP_TTL_MIN: z.coerce.number().int().min(1).max(60).default(10),
+    /** Wrong guesses before the challenge is burned. */
+    OTP_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
+    /** Codes per challenge, to bound resend abuse. */
+    OTP_MAX_SENDS: z.coerce.number().int().min(1).max(20).default(5),
+    OTP_RESEND_COOLDOWN_SEC: z.coerce.number().int().min(5).max(600).default(60),
+    LOGIN_MAX_FAILURES: z.coerce.number().int().min(3).max(50).default(10),
+    LOGIN_LOCKOUT_MIN: z.coerce.number().int().min(1).max(1440).default(15),
+
     // --- Email ------------------------------------------------------------
     /**
      * "resend" sends real mail. "console" writes the message to the log and

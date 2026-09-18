@@ -131,6 +131,38 @@ export function passwordResetEmail(input: {
   };
 }
 
+export function existingAccountEmail(input: {
+  name: string;
+}): Omit<EmailMessage, "to"> {
+  const who = firstName(input.name);
+  return {
+    subject: "You already have a GoSaath account",
+    tag: "existing-account",
+    html: layout(
+      [
+        '    <div style="font-size:16px;line-height:1.6;">',
+        `      <p style="margin:0 0 16px;">Hi ${who},</p>`,
+        '      <p style="margin:0 0 8px;">Somebody just tried to create a GoSaath account with this address, but you already have one. No new account was made and nothing has changed.</p>',
+        '      <p style="margin:0 0 8px;">If that was you, sign in instead. If you have forgotten your password, use <strong>Forgot your password</strong> on the sign-in screen.</p>',
+        '      <p style="margin:16px 0 0;">If it was not you, you can safely ignore this — somebody likely mistyped their own address.</p>',
+        "    </div>",
+      ].join("\n"),
+    ),
+    text: [
+      `Hi ${who},`,
+      "",
+      "Somebody just tried to create a GoSaath account with this address, but",
+      "you already have one. No new account was made and nothing has changed.",
+      "",
+      "If that was you, sign in instead. If you have forgotten your password,",
+      "use Forgot your password on the sign-in screen.",
+      "",
+      "If it was not you, you can safely ignore this — somebody likely",
+      "mistyped their own address.",
+    ].join("\n"),
+  };
+}
+
 export function badgeDecisionEmail(input: {
   name: string;
   approved: boolean;

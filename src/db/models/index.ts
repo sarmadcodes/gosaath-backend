@@ -5,6 +5,7 @@
  * its indexes part of the deploy, so a new collection cannot ship without them.
  */
 export * from "./user.model.js";
+export * from "./auth.model.js";
 export * from "./institution.model.js";
 export * from "./commute.model.js";
 export * from "./social.model.js";

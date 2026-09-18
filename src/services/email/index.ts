@@ -4,6 +4,7 @@ import { ConsoleEmailProvider } from "./console.provider.js";
 import { createResendProvider } from "./resend.provider.js";
 import {
   badgeDecisionEmail,
+  existingAccountEmail,
   passwordResetEmail,
   verificationCodeEmail,
 } from "./templates.js";
@@ -42,6 +43,16 @@ class TemplatedEmailService implements EmailService {
     return this.provider.send({
       to: input.to,
       ...passwordResetEmail(input),
+    });
+  }
+
+  async sendExistingAccountNotice(input: {
+    to: string;
+    name: string;
+  }): Promise<EmailResult> {
+    return this.provider.send({
+      to: input.to,
+      ...existingAccountEmail(input),
     });
   }
 
