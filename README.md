@@ -3,10 +3,10 @@
 Node + TypeScript + MongoDB backend for the GoSaath commute app, the future
 University Admin panel and the Super Admin panel.
 
-**Phases 0–4 complete.** Foundation, data layer, email, authentication, the
-account surface, and the commute engine — templates, per-day schedules,
-rolling instance generation and day-level exceptions. Matching comes next —
-see [Build order](#build-order).
+**Phases 0–5 complete.** Foundation, data layer, email, authentication, the
+account surface, the commute engine, and matching — including ride search,
+the nearby radius and area-level location. Seat requests come next — see
+[Build order](#build-order).
 
 ## Quick start
 
@@ -260,6 +260,56 @@ and unchanged throughout.
 A schedule edit rebuilds only days **strictly after today**. Today's ride is
 one people may already be travelling to.
 
+### Matching
+
+The hot path, and the one with the strictest rules.
+
+**Institution and campus are constraints, not filters.** They are read from
+the caller's own commute; no request parameter reaches the query. `RideSearch`
+carries optional `institutionId`/`campusId` because the client type has them —
+a value that differs from the caller's own is **403**, not an empty list. Empty
+would teach an attacker the field is respected but unlucky.
+
+**Blocks apply in both directions.** Filtering only on who the caller blocked
+leaves the blocked person still seeing the blocker — and silence from somebody
+plainly still there is how a block gives itself away. Tested both ways, for
+matches and for ride search.
+
+**`matchingDays` is computed server-side** and rendered by the client, which
+has neither the other schedule nor the tolerance. Two people matching Monday
+and Wednesday but not Tuesday is the normal case.
+
+**The summary is a five-way state**, because a count cannot express the
+difference:
+
+| State | Means |
+|---|---|
+| `noCommute` | Nothing set up yet |
+| `none` | Nobody else is at this campus |
+| `noDayMatch` | People are here, but travel other days |
+| `noTimeMatch` | Days line up, times do not |
+| `matches` | Found people |
+
+`none` and `noDayMatch` are both zero and need entirely different copy.
+
+**Nearby means something.** Three kilometres between area centroids, enforced —
+Gulshan to Malir (~11 km) is excluded by test. The distance itself is never
+returned; only the phrase.
+
+#### Known gap: `womenOnly` cannot be enforced
+
+The product has a women-only flag on the commute, but **the system stores no
+gender for anybody** — not on `User`, not in the contract, nowhere. So this
+cannot do what the feature name promises.
+
+What it does instead is pair the flag symmetrically: a women-only commute only
+ever meets another women-only commute. That is the safest behaviour available
+and deliberately under-matches rather than over-matches — but it is **not a
+guarantee**, and must not be presented to users as one.
+
+Resolving it is a product decision, not a technical one: collecting gender
+changes what this app holds about people.
+
 ### Error handling
 
 Every error becomes one typed `AppError` and one envelope:
@@ -333,11 +383,17 @@ commute by five hours.
 2. **2 moderate npm advisories**, both in `@vitest/mocker` → dev-only, never
    shipped. The offered fix downgrades vitest and reintroduces the esbuild
    advisories, so it is deliberately not applied.
-3. **The Atlas credential was pasted into a chat.** It works, and it is in
+3. **The test suite takes about six minutes.** The cost is round trips to a
+   remote Atlas cluster — roughly 2.8s per integration test, mostly waiting on
+   the network. Lowering the Argon2 work factor for tests was tried and
+   reverted: it bought 1.6%, which did not justify tests exercising different
+   parameters from production. The real fix is a local MongoDB (or
+   `mongodb-memory-server`) for the suite, with Atlas kept for a pre-deploy run.
+4. **The Atlas credential was pasted into a chat.** It works, and it is in
    `.env` which is gitignored — but it should be rotated in Atlas before this
    goes anywhere real, and the production credential should never be typed
    into a chat window at all.
-4. **Tests run against a separate `gosaath_test` database**, forced in
+5. **Tests run against a separate `gosaath_test` database**, forced in
    `vitest.config.ts` rather than read from `.env`, so no run can touch real
    data even if the environment says otherwise.
 
@@ -353,7 +409,7 @@ Each phase ends with `npm run verify` passing.
 | **2** | **Auth: register, OTP, verify, login, restore, reset** | **Done** — 36 tests |
 | **3** | **me, institutions, campuses, areas, preferences, vehicles** | **Done** — 31 tests |
 | **4** | **Commutes, RideInstance generation, attendance, exceptions** | **Done** — 28 tests |
-| 5 | Matching, search, nearby, blocks both directions | `explain()` shows IXSCAN |
+| **5** | **Matching, search, nearby, blocks both directions** | **Done** — 27 tests, `explain()` asserts IXSCAN |
 | 6 | Seat requests, accept/decline | 10 concurrent vs 2 seats |
 | 7 | Notifications, push tokens, delivery job | Delivery never blocks response |
 | 8 | Safety, reports, support | |

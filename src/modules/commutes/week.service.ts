@@ -7,7 +7,7 @@ import {
   RideInstanceModel,
   UserModel,
 } from "../../db/models/index.js";
-import { isoDate, startOfDay, weekOf } from "../../utils/dates.js";
+import { isoDate, startOfDay, upcomingDays } from "../../utils/dates.js";
 import { toPublicUser } from "../users/user.mapper.js";
 import type {
   CommuteDay,
@@ -63,17 +63,24 @@ async function visibleCommute(userId: string, commuteId: string) {
 }
 
 /**
- * The current week as the client renders it.
+ * The week ahead, as the client renders it.
  *
- * Built from instances, not from the template, so a skipped Tuesday and a
- * driver-less Thursday show as themselves rather than as ordinary days.
+ * A ROLLING seven days from today, not the calendar week.
+ *
+ * The calendar week empties out as the week ends: instances only exist from
+ * today forward, so by Sunday a Mon/Wed/Fri commuter sees nothing at all, and
+ * mid-week they see only the stub that is left. A rolling window always
+ * answers the question the screen is actually asking — what is coming up.
+ *
+ * Built from instances rather than the template, so a skipped day and a
+ * driver-less one show as themselves rather than as ordinary days.
  */
 export async function weekFor(
   userId: string,
   commuteId: string,
 ): Promise<CommuteDay[]> {
   const commute = await visibleCommute(userId, commuteId);
-  const days = weekOf();
+  const days = upcomingDays(7);
 
   const instances = await RideInstanceModel.find({
     commuteId: commute._id,

@@ -16,11 +16,21 @@ import { hash as argonHash, verify as argonVerify } from "@node-rs/argon2";
  * attacker cannot parallelise thousands of these on a graphics card the way
  * they can with bcrypt.
  */
-const ARGON_OPTIONS = {
+export const ARGON_OPTIONS = {
   memoryCost: 19_456,
   timeCost: 2,
   parallelism: 1,
 } as const;
+
+/**
+ * Kept as an alias so the guard test reads as what it is checking.
+ *
+ * A weaker set was tried for the test environment and reverted: it made the
+ * suite 1.6% faster, because the cost there is round trips to a remote
+ * database, not hashing. It was not worth a divergence between what tests
+ * exercise and what production runs.
+ */
+export const PRODUCTION_ARGON_OPTIONS = ARGON_OPTIONS;
 
 export async function hashPassword(plain: string): Promise<string> {
   return argonHash(plain, ARGON_OPTIONS);

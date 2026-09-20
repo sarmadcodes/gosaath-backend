@@ -16,6 +16,7 @@ import {
   publicInstitutionRoutes,
 } from "../modules/users/me.routes.js";
 import { commuteRoutes } from "../modules/commutes/commute.routes.js";
+import { matchRoutes } from "../modules/matching/match.routes.js";
 
 /**
  * Builds the application without listening.
@@ -117,6 +118,7 @@ export async function buildApp(
       await api.register(publicInstitutionRoutes);
       await api.register(meRoutes);
       await api.register(commuteRoutes);
+      await api.register(matchRoutes);
     },
     { prefix: "/api/v1" },
   );
