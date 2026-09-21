@@ -144,3 +144,39 @@ export const LoginAttemptModel = model(
   loginAttemptSchema,
   "loginAttempts",
 );
+
+/**
+ * An invitation to administer.
+ *
+ * The only way a role is ever granted. The token is emailed and stored as a
+ * SHA-256 digest; it is single-use, expires, and can be revoked. Receiving it
+ * at the invited address is what proves ownership of that address, which is
+ * why an invited administrator can register into an institution that is not
+ * yet live — the one exception to the active-institution rule, and only for
+ * the person named on the invitation.
+ */
+const adminInvitationSchema = new Schema(
+  {
+    email: { type: String, required: true, lowercase: true, trim: true },
+    institutionId: { type: Schema.Types.ObjectId, ref: "Institution", required: true },
+    role: { type: String, enum: ["universityAdmin", "superAdmin"], required: true },
+    tokenHash: { type: String, required: true, select: false },
+    invitedBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    expiresAt: { type: Date, required: true },
+    acceptedAt: { type: Date, default: null },
+    acceptedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    revokedAt: { type: Date, default: null },
+  },
+  baseOptions,
+);
+
+adminInvitationSchema.index({ tokenHash: 1 }, { unique: true });
+adminInvitationSchema.index({ email: 1, acceptedAt: 1, revokedAt: 1 });
+adminInvitationSchema.index({ institutionId: 1, createdAt: -1 });
+
+export type AdminInvitationDoc = InferSchemaType<typeof adminInvitationSchema>;
+export const AdminInvitationModel = model(
+  "AdminInvitation",
+  adminInvitationSchema,
+  "adminInvitations",
+);

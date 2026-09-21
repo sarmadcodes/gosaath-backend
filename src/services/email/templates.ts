@@ -163,6 +163,47 @@ export function existingAccountEmail(input: {
   };
 }
 
+export function adminInvitationEmail(input: {
+  institutionName: string;
+  role: "universityAdmin" | "superAdmin";
+  acceptUrl: string;
+  expiresInHours: number;
+}): Omit<EmailMessage, "to"> {
+  const institution = escapeHtml(input.institutionName);
+  const what =
+    input.role === "superAdmin"
+      ? "administer the GoSaath platform"
+      : `administer GoSaath for ${institution}`;
+  const url = escapeHtml(input.acceptUrl);
+
+  return {
+    subject: "You have been invited to administer GoSaath",
+    tag: "admin-invitation",
+    html: layout(
+      [
+        '    <div style="font-size:16px;line-height:1.6;">',
+        `      <p style="margin:0 0 16px;">You have been invited to ${what}.</p>`,
+        `      <p style="margin:0 0 24px;"><a href="${url}" style="display:inline-block;padding:12px 20px;background:${BRAND};color:#ffffff;border-radius:8px;text-decoration:none;font-weight:600;">Accept the invitation</a></p>`,
+        "    </div>",
+        '    <div style="font-size:14px;line-height:1.6;color:#4b5563;">',
+        `      <p style="margin:0 0 8px;">This link works once and expires in ${input.expiresInHours} hours.</p>`,
+        '      <p style="margin:0;">Do not forward it: whoever opens it can claim the role. If you were not expecting this, ignore it and nothing will change.</p>',
+        "    </div>",
+      ].join("\n"),
+    ),
+    text: [
+      `You have been invited to ${input.role === "superAdmin" ? "administer the GoSaath platform" : `administer GoSaath for ${input.institutionName}`}.`,
+      "",
+      "Accept the invitation:",
+      input.acceptUrl,
+      "",
+      `This link works once and expires in ${input.expiresInHours} hours.`,
+      "Do not forward it: whoever opens it can claim the role.",
+      "If you were not expecting this, ignore it and nothing will change.",
+    ].join("\n"),
+  };
+}
+
 export function badgeDecisionEmail(input: {
   name: string;
   approved: boolean;

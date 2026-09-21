@@ -73,6 +73,9 @@ const schema = z
     LOGIN_MAX_FAILURES: z.coerce.number().int().min(3).max(50).default(10),
     LOGIN_LOCKOUT_MIN: z.coerce.number().int().min(1).max(1440).default(15),
 
+    /** Where admin invitation links point. The admin panel's own origin. */
+    ADMIN_PANEL_URL: z.string().url().default("http://localhost:5173"),
+
     // --- Email ------------------------------------------------------------
     /**
      * "resend" sends real mail. "console" writes the message to the log and

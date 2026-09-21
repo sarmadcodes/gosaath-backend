@@ -3,12 +3,12 @@
 Node + TypeScript + MongoDB backend for the GoSaath commute app, the future
 University Admin panel and the Super Admin panel.
 
-**Phases 0–10 complete.** Foundation, data layer, email, authentication, the
+**Phases 0–11 complete.** Foundation, data layer, email, authentication, the
 account surface, the commute engine, matching, seat requests, and
 notifications with push delivery, and safety (reports, blocks, support). The
 core member-facing API is complete. The admin foundation — scope
-enforcement and an append-only audit log — is in place, and the University Admin API is built on it. The Super Admin
-surface — institutions, activation, admin invitations — comes next — see [Build order](#build-order).
+enforcement and an append-only audit log — is in place, with both the University Admin and Super Admin APIs built on it. Live
+admin events (SSE) and performance work come next — see [Build order](#build-order).
 
 ## Quick start
 
@@ -475,6 +475,52 @@ institution explicitly in a query is **403**, not a silently narrowed result.
   memory, and neutralises cells beginning with `=`, `+`, `-` or `@` so a name
   cannot execute as a spreadsheet formula.
 
+### Super Admin API
+
+`/admin/platform/overview`, `/admin/institutions` (list, detail, create,
+checklist, activate, deactivate), `/admin/institution-requests`,
+`/admin/admins` (list, invite, remove), `/admin/invitations`, plus
+`POST /admin/invitations/accept` and `POST /auth/register-invited`.
+
+**Institutions are created inactive, always** — `active` is not an accepted
+field. Karachi only; organisations are refused while `FEATURE_ORGANISATIONS`
+is off.
+
+**The activation checklist reads reality, not tick-boxes.** Logos uploaded, at
+least one active campus, and a university admin in place are derived from the
+database and cannot be set by a request. Only human judgements — contacted,
+domains confirmed with IT, colour sampled from the real logo — are ticked.
+Activation is refused with the number of missing items until every required one
+is met, and is guarded so two simultaneous activations record once.
+
+Two items in the original plan were impossible before launch, because
+registration refuses inactive institutions:
+
+- **"A named admin"** is met by an **admin invitation**, the one path allowed to
+  register into an inactive institution — and only for the invited address,
+  whose inbox receiving the token is the proof of ownership.
+- **"Enough signups"** cannot be signups. It is the number of people who
+  requested the institution, shown as **advisory** and never enforced;
+  enforcing it would make activation impossible.
+
+**Invitations** are the only way a role is granted. The token is emailed,
+stored as a SHA-256 digest, never returned by the API, single-use (claimed
+atomically), expires after 72 hours, and is revoked by a re-send. Accepting
+requires the signed-in account's address to be the invited one; holding the
+link is not enough.
+
+**Destructive actions require the password again** — deactivating an
+institution and removing an administrator. Removal demotes to member rather
+than deleting: losing admin rights must not cost somebody their commute.
+Nobody can remove themselves, and **the last super admin cannot be removed —
+enforced in a transaction serialised on a lock document**, because a plain
+count-then-demote lets two super admins remove each other at the same instant
+and leave the platform with none. That race is tested.
+
+The institution request queue is **grouped by name** so demand is visible, and
+does not expose requesters' addresses. Approving a request never creates an
+institution.
+
 ### Error handling
 
 Every error becomes one typed `AppError` and one envelope:
@@ -554,11 +600,14 @@ commute by five hours.
    reverted: it bought 1.6%, which did not justify tests exercising different
    parameters from production. The real fix is a local MongoDB (or
    `mongodb-memory-server`) for the suite, with Atlas kept for a pre-deploy run.
-4. **The Atlas credential was pasted into a chat.** It works, and it is in
+4. **No second factor for super admins yet.** Destructive actions require the
+   password again, but mandatory TOTP for the platform role is not built. It
+   should be before the Super Admin panel is used by anyone but the owner.
+5. **The Atlas credential was pasted into a chat.** It works, and it is in
    `.env` which is gitignored — but it should be rotated in Atlas before this
    goes anywhere real, and the production credential should never be typed
    into a chat window at all.
-5. **Tests run against a separate `gosaath_test` database**, forced in
+6. **Tests run against a separate `gosaath_test` database**, forced in
    `vitest.config.ts` rather than read from `.env`, so no run can touch real
    data even if the environment says otherwise.
 
@@ -580,7 +629,7 @@ Each phase ends with `npm run verify` passing.
 | **8** | **Safety, reports, support** | **Done** — 17 tests |
 | **9** | **Audit log + scope middleware** | **Done** — 18 tests, append-only enforced by the model |
 | **10** | **University Admin** | **Done** — 33 tests, IDOR suite across two institutions |
-| 11 | Super Admin, activation checklist | Privilege-escalation suite |
+| **11** | **Super Admin, activation checklist** | **Done** — 38 tests, escalation suite and removal race |
 | 12 | SSE | Scoped events |
 | 13 | Performance: load, p95/p99, query plans | |
 | 14 | Security review, then `httpApi` integration | App runs against real backend |

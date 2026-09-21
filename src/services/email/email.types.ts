@@ -64,6 +64,20 @@ export interface EmailService {
     name: string;
   }): Promise<EmailResult>;
 
+  /**
+   * An invitation to administer an institution.
+   *
+   * The link carries a single-use token. Whoever holds it can claim the role,
+   * which is why it only ever goes to the invited address and expires.
+   */
+  sendAdminInvitation(input: {
+    to: string;
+    institutionName: string;
+    role: "universityAdmin" | "superAdmin";
+    acceptUrl: string;
+    expiresInHours: number;
+  }): Promise<EmailResult>;
+
   sendBadgeDecision(input: {
     to: string;
     name: string;

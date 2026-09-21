@@ -3,6 +3,7 @@ import { logger } from "../../utils/logger.js";
 import { ConsoleEmailProvider } from "./console.provider.js";
 import { createResendProvider } from "./resend.provider.js";
 import {
+  adminInvitationEmail,
   badgeDecisionEmail,
   existingAccountEmail,
   passwordResetEmail,
@@ -54,6 +55,16 @@ class TemplatedEmailService implements EmailService {
       to: input.to,
       ...existingAccountEmail(input),
     });
+  }
+
+  async sendAdminInvitation(input: {
+    to: string;
+    institutionName: string;
+    role: "universityAdmin" | "superAdmin";
+    acceptUrl: string;
+    expiresInHours: number;
+  }): Promise<EmailResult> {
+    return this.provider.send({ to: input.to, ...adminInvitationEmail(input) });
   }
 
   async sendBadgeDecision(input: {

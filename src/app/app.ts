@@ -21,6 +21,7 @@ import { notificationRoutes } from "../modules/notifications/notification.routes
 import { safetyRoutes } from "../modules/safety/safety.routes.js";
 import { adminRoutes } from "../modules/admin/admin.routes.js";
 import { universityAdminRoutes } from "../modules/admin/university.routes.js";
+import { superAdminRoutes } from "../modules/admin/super.routes.js";
 
 /**
  * Builds the application without listening.
@@ -127,6 +128,7 @@ export async function buildApp(
       await api.register(safetyRoutes);
       await api.register(adminRoutes);
       await api.register(universityAdminRoutes);
+      await api.register(superAdminRoutes);
     },
     { prefix: "/api/v1" },
   );
