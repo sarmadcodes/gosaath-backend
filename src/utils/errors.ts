@@ -149,9 +149,19 @@ export class RateLimitError extends AppError {
 export class BusinessRuleError extends AppError {
   readonly statusCode = 409;
   readonly code = "BUSINESS_RULE" as const;
+  /**
+   * Structured facts the client needs to act on the refusal — "12 members
+   * would be affected" as a number, so a panel can render a confirm dialog
+   * without parsing a sentence.
+   *
+   * Unlike `context`, this IS sent to the client, so only ever put counts and
+   * ids here that the caller is already entitled to see.
+   */
+  readonly details?: Record<string, number | string | boolean>;
 
-  constructor(message: string, context?: Record<string, unknown>) {
-    super(message, context);
+  constructor(message: string, details?: Record<string, number | string | boolean>) {
+    super(message, details);
+    this.details = details;
   }
 }
 

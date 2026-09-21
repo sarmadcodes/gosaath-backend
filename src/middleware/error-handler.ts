@@ -4,6 +4,7 @@ import {
   AppError,
   AuthenticationError,
   AuthorizationError,
+  BusinessRuleError,
   ConflictError,
   NotFoundError,
   PayloadTooLargeError,
@@ -29,6 +30,7 @@ type ErrorBody = {
     message: string;
     requestId: string;
     fields?: Array<{ path: string; message: string }>;
+    details?: Record<string, number | string | boolean>;
   };
 };
 
@@ -142,6 +144,9 @@ export function registerErrorHandler(app: FastifyInstance): void {
 
     if (normalised instanceof ValidationError && normalised.fields) {
       body.error.fields = normalised.fields;
+    }
+    if (normalised instanceof BusinessRuleError && normalised.details) {
+      body.error.details = normalised.details;
     }
 
     reply.code(normalised.statusCode).send(body);

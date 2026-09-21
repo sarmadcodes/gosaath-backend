@@ -3,12 +3,12 @@
 Node + TypeScript + MongoDB backend for the GoSaath commute app, the future
 University Admin panel and the Super Admin panel.
 
-**Phases 0–9 complete.** Foundation, data layer, email, authentication, the
+**Phases 0–10 complete.** Foundation, data layer, email, authentication, the
 account surface, the commute engine, matching, seat requests, and
 notifications with push delivery, and safety (reports, blocks, support). The
 core member-facing API is complete. The admin foundation — scope
-enforcement and an append-only audit log — is in place; the University Admin
-surface comes next — see [Build order](#build-order).
+enforcement and an append-only audit log — is in place, and the University Admin API is built on it. The Super Admin
+surface — institutions, activation, admin invitations — comes next — see [Build order](#build-order).
 
 ## Quick start
 
@@ -438,6 +438,43 @@ pagination — an offset into a log that keeps growing skips or repeats entries.
 Roles are assigned directly in the database for now. There is deliberately no
 API that grants a role; admin invitations are part of the Super Admin phase.
 
+### University Admin API
+
+`/admin/overview`, `/admin/members` (list, detail, suspend, restore,
+reveal-phone, `export.csv`), `/admin/verifications`, `/admin/campuses`,
+`PATCH /admin/institutions/:id`, `/admin/reports`.
+
+Used by university admins for their own institution and by super admins for
+any. Every read starts from the scope filter; every single resource is checked
+against it; every change is audited.
+
+**Tested from the side.** The suite creates a second institution and has the
+first institution's admin try every route against it — ids in the path, in the
+query string, in the body. All of it fails. An id from another institution and
+an id that does not exist return the same 404 and message. Naming another
+institution explicitly in a query is **403**, not a silently narrowed result.
+
+- **Phone numbers are never listed** — not in the table, the detail view, or
+  the CSV. Revealing one is its own request, requires a reason, is rate-limited,
+  and is audited without writing the number into the log.
+- **Suspension signs the member out everywhere** by revoking their refresh
+  chain. A university admin can act on members only; administrators are the
+  platform's to manage, and nobody can suspend themselves.
+- **Verification decisions are guarded on `pending`**, so two admins deciding
+  at once cannot both succeed. Rejection needs a reason from a fixed list plus
+  an optional note — free text alone produces "no" and nothing to fix.
+- **Destructive profile changes need confirmation.** Deactivating a campus with
+  members, or changing email domains in a way that orphans accounts, returns
+  **409 with the count in `error.details`**; resending with `confirm: true`
+  applies it.
+- **Reports**: university admins act on open reports and can escalate;
+  escalated reports belong to the platform team. Suspending via a report checks
+  permission *before* the report changes, so a report never claims an action
+  that did not happen.
+- **CSV export streams from a cursor**, never loading the institution into
+  memory, and neutralises cells beginning with `=`, `+`, `-` or `@` so a name
+  cannot execute as a spreadsheet formula.
+
 ### Error handling
 
 Every error becomes one typed `AppError` and one envelope:
@@ -542,7 +579,7 @@ Each phase ends with `npm run verify` passing.
 | **7** | **Notifications, push tokens, delivery** | **Done** — delivery never blocks the response |
 | **8** | **Safety, reports, support** | **Done** — 17 tests |
 | **9** | **Audit log + scope middleware** | **Done** — 18 tests, append-only enforced by the model |
-| 10 | University Admin | IDOR suite |
+| **10** | **University Admin** | **Done** — 33 tests, IDOR suite across two institutions |
 | 11 | Super Admin, activation checklist | Privilege-escalation suite |
 | 12 | SSE | Scoped events |
 | 13 | Performance: load, p95/p99, query plans | |
