@@ -18,6 +18,8 @@ import {
 import { commuteRoutes } from "../modules/commutes/commute.routes.js";
 import { matchRoutes } from "../modules/matching/match.routes.js";
 import { notificationRoutes } from "../modules/notifications/notification.routes.js";
+import { safetyRoutes } from "../modules/safety/safety.routes.js";
+import { adminRoutes } from "../modules/admin/admin.routes.js";
 
 /**
  * Builds the application without listening.
@@ -121,6 +123,8 @@ export async function buildApp(
       await api.register(commuteRoutes);
       await api.register(matchRoutes);
       await api.register(notificationRoutes);
+      await api.register(safetyRoutes);
+      await api.register(adminRoutes);
     },
     { prefix: "/api/v1" },
   );

@@ -131,6 +131,39 @@ auditLogSchema.index({ actorUserId: 1, createdAt: -1 });
 auditLogSchema.index({ institutionId: 1, createdAt: -1 });
 auditLogSchema.index({ action: 1, createdAt: -1 });
 
+/**
+ * Append-only, enforced here rather than by convention.
+ *
+ * Every update and delete path Mongoose offers throws. A record of who did
+ * what is worthless if it can be quietly edited afterwards, and a rule that
+ * lives only in a comment is a rule the next hurried change breaks.
+ *
+ * Retention, if it is ever needed, is a deliberate compliance job run against
+ * the raw collection — not a normal code path.
+ */
+const APPEND_ONLY =
+  "The audit log is append-only; entries cannot be changed or removed.";
+
+for (const operation of [
+  "updateOne",
+  "updateMany",
+  "findOneAndUpdate",
+  "replaceOne",
+  "findOneAndReplace",
+  "deleteOne",
+  "deleteMany",
+  "findOneAndDelete",
+] as const) {
+  auditLogSchema.pre(operation, function () {
+    throw new Error(APPEND_ONLY);
+  });
+}
+
+auditLogSchema.pre("save", function (this: { isNew: boolean }) {
+  // Inserting is the only permitted write.
+  if (!this.isNew) throw new Error(APPEND_ONLY);
+});
+
 export type AuditLogDoc = InferSchemaType<typeof auditLogSchema>;
 export const AuditLogModel = model("AuditLog", auditLogSchema, "auditLog");
 

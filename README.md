@@ -3,10 +3,12 @@
 Node + TypeScript + MongoDB backend for the GoSaath commute app, the future
 University Admin panel and the Super Admin panel.
 
-**Phases 0–7 complete.** Foundation, data layer, email, authentication, the
+**Phases 0–9 complete.** Foundation, data layer, email, authentication, the
 account surface, the commute engine, matching, seat requests, and
-notifications with push delivery. The core product works end to end. Safety
-and moderation come next — see [Build order](#build-order).
+notifications with push delivery, and safety (reports, blocks, support). The
+core member-facing API is complete. The admin foundation — scope
+enforcement and an append-only audit log — is in place; the University Admin
+surface comes next — see [Build order](#build-order).
 
 ## Quick start
 
@@ -389,6 +391,53 @@ life is visible rather than silently recreated.
 server-side, the same choice as `ProximityEstimate.label`. Every screen shows
 the same wording rather than inventing its own.
 
+### Safety
+
+`POST /safety/reports`, `POST`/`GET /safety/blocks`,
+`DELETE /safety/blocks/:userId`, `POST /support`.
+
+**Reports return nothing to poll.** No id, no status: the outcome belongs to
+moderation, and a handle would imply an entitlement to follow the case. The
+report is scoped to the reporter's institution, whose admins handle it. A
+person at another institution and a person who does not exist get the same
+404, so the form cannot test which ids are real. The detail is never logged.
+
+**Blocks are silent and idempotent.** Nobody is notified. The blocked list
+shows only who the caller blocked, never who blocked them. Blocking cancels
+pending seat requests between the two in both directions, but leaves accepted
+seats alone: pulling someone off tomorrow's ride without warning is a decision
+for a person with context, not a side effect of a button.
+
+**Support replies to the account address**, ignoring any address in the body —
+otherwise the support mailbox could be made to write to anyone.
+
+### Admin foundation
+
+Built before any admin feature, so there is no admin route that does not go
+through it.
+
+**The role is read from the database on every admin request**, not from the
+token. An access token lives fifteen minutes; removing somebody's admin role
+has to take effect on their next request, not a quarter of an hour later. One
+indexed read per admin request buys revocation that actually revokes — tested
+by demoting an admin and replaying the same token.
+
+**Scope is a filter, spread last.** Every admin query starts from
+`scopeFilter(request.admin.scope)`, spread after anything taken from the
+request, so a university admin's query always pins their own institution no
+matter what a query string says. Out-of-scope single resources return **404,
+not 403** — a 403 would confirm the id exists in another institution.
+
+**The audit log is append-only in the model, not by convention.** Every
+Mongoose update and delete path throws. Metadata is scrubbed of anything that
+looks like a secret or a phone number before it is written, at any depth,
+because an append-only collection is the one place a leaked secret can never be
+cleaned out of. It is readable by platform administrators only, with cursor
+pagination — an offset into a log that keeps growing skips or repeats entries.
+
+Roles are assigned directly in the database for now. There is deliberately no
+API that grants a role; admin invitations are part of the Super Admin phase.
+
 ### Error handling
 
 Every error becomes one typed `AppError` and one envelope:
@@ -462,7 +511,7 @@ commute by five hours.
 2. **2 moderate npm advisories**, both in `@vitest/mocker` → dev-only, never
    shipped. The offered fix downgrades vitest and reintroduces the esbuild
    advisories, so it is deliberately not applied.
-3. **The test suite takes about six minutes.** The cost is round trips to a
+3. **The test suite takes about ten minutes, and stalls when the network does.** The cost is round trips to a
    remote Atlas cluster — roughly 2.8s per integration test, mostly waiting on
    the network. Lowering the Argon2 work factor for tests was tried and
    reverted: it bought 1.6%, which did not justify tests exercising different
@@ -491,8 +540,8 @@ Each phase ends with `npm run verify` passing.
 | **5** | **Matching, search, nearby, blocks both directions** | **Done** — 27 tests, `explain()` asserts IXSCAN |
 | **6** | **Seat requests, accept/decline** | **Done** — 21 tests, 10-concurrent gate passes |
 | **7** | **Notifications, push tokens, delivery** | **Done** — delivery never blocks the response |
-| 8 | Safety, reports, support | |
-| 9 | Audit log + scope middleware — **before any admin route** | Member cannot read audit |
+| **8** | **Safety, reports, support** | **Done** — 17 tests |
+| **9** | **Audit log + scope middleware** | **Done** — 18 tests, append-only enforced by the model |
 | 10 | University Admin | IDOR suite |
 | 11 | Super Admin, activation checklist | Privilege-escalation suite |
 | 12 | SSE | Scoped events |
