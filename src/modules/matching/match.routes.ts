@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authenticate, requireUser } from "../../middleware/authenticate.js";
 import * as matching from "./matching.service.js";
 import * as rides from "../rides/ride.service.js";
+import * as seatRequests from "../rides/seat-request.service.js";
 import * as location from "../location/location.service.js";
 
 /**
@@ -78,6 +79,48 @@ export async function matchRoutes(app: FastifyInstance): Promise<void> {
     // null rather than 404: the client treats a missing listing as "gone",
     // which is an ordinary outcome when a ride fills up.
     return { data: await rides.getRide(requireUser(request).id, id) };
+  });
+
+  // --- Seat requests ------------------------------------------------------
+  //
+  // Two directions, deliberately two endpoints. One is a to-do list with
+  // Accept and Decline on it; the other is a waiting list. Merging them makes
+  // both useless.
+
+  app.get("/requests/incoming", async (request) => ({
+    data: await seatRequests.incomingRequests(requireUser(request).id),
+  }));
+
+  app.get("/requests/sent", async (request) => ({
+    data: await seatRequests.sentRequests(requireUser(request).id),
+  }));
+
+  app.post("/rides/:id/request", async (request) => {
+    const { id } = z.object({ id: objectId }).parse(request.params);
+    const { seats } = z
+      .object({ seats: z.number().int().min(1).max(4).default(1) })
+      .strict()
+      .parse(request.body ?? {});
+
+    return {
+      data: await seatRequests.requestSeat(requireUser(request).id, id, seats),
+    };
+  });
+
+  app.post("/requests/:id/respond", async (request) => {
+    const { id } = z.object({ id: objectId }).parse(request.params);
+    const { action } = z
+      .object({ action: z.enum(["accept", "decline"]) })
+      .strict()
+      .parse(request.body);
+
+    return {
+      data: await seatRequests.respondToRequest(
+        requireUser(request).id,
+        id,
+        action,
+      ),
+    };
   });
 
   // --- Location -----------------------------------------------------------

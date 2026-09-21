@@ -3,10 +3,10 @@
 Node + TypeScript + MongoDB backend for the GoSaath commute app, the future
 University Admin panel and the Super Admin panel.
 
-**Phases 0–5 complete.** Foundation, data layer, email, authentication, the
-account surface, the commute engine, and matching — including ride search,
-the nearby radius and area-level location. Seat requests come next — see
-[Build order](#build-order).
+**Phases 0–7 complete.** Foundation, data layer, email, authentication, the
+account surface, the commute engine, matching, seat requests, and
+notifications with push delivery. The core product works end to end. Safety
+and moderation come next — see [Build order](#build-order).
 
 ## Quick start
 
@@ -310,6 +310,85 @@ guarantee**, and must not be presented to users as one.
 Resolving it is a product decision, not a technical one: collecting gender
 changes what this app holds about people.
 
+### Seat requests
+
+`POST /rides/:id/request`, `POST /requests/:id/respond`,
+`GET /requests/incoming`, `GET /requests/sent`.
+
+**Two directions, two endpoints.** Incoming is people asking for seats you
+offer — a to-do list with Accept and Decline on it. Sent is what you have
+asked of others, which is a waiting list. Merging them makes both useless.
+
+**Asking consumes nothing.** A seat is taken only when the driver accepts;
+otherwise somebody could block a ride by asking and never showing up.
+
+**Acceptance is one atomic claim, not read-then-write.** Several people can
+accept the last seat in the same instant, and reading the free seat then
+writing lets every one of them through. Capacity is claimed by a single
+guarded update instead:
+
+```js
+findOneAndUpdate(
+  { _id, status: "scheduled",
+    $expr: { $lte: [{ $add: ["$seatsTaken", seats] }, "$seatsOffered"] } },
+  { $inc: { seatsTaken: seats } },
+)
+```
+
+The database evaluates that guard against the document it is about to modify,
+so the check and the increment are one operation with nothing in between. A
+caller that loses the race gets no document back and is told the seat has gone.
+
+A transaction wraps the other two writes — the status change and the
+attendance row — so a claimed seat can never be left without the request and
+the passenger that justify it.
+
+**Tested with ten concurrent accepts against two seats**: exactly two succeed,
+`seatsTaken` is 2, two attendance rows exist, and the eight that lost stay
+**pending** rather than being auto-declined — a seat may free up, and refusing
+on the driver's behalf is not the server's call.
+
+**State transitions are guarded.** Only `pending` can be answered, and only by
+the driver. A declined request can never become accepted by a replayed call.
+
+**Refusals reveal nothing.** Another institution, another campus, or a block in
+either direction all return the same **404** — a distinct error would tell a
+blocked person exactly what had happened.
+
+### Notifications
+
+`GET /notifications`, `POST /notifications/:id/read`, and
+`POST`/`DELETE /notifications/token`.
+
+**Two halves that must not be confused.** The in-app list is a durable record
+in MongoDB; push is a best-effort nudge through a third party. The list is the
+source of truth — a push that never arrives loses a nudge, not the
+notification.
+
+**The push is dispatched, never awaited.** A driver tapping Accept must not
+wait on Expo, and a push provider having a bad afternoon must not turn an
+accepted seat into a failed request. A test hangs the provider indefinitely
+and asserts the request still returns.
+
+This is **not durable**: a process restart between writing the row and sending
+loses the push, though never the notification. A real queue (BullMQ on Redis)
+slots in behind the same call and is the upgrade when push delivery starts
+mattering more than the in-app list.
+
+**Push is sent after the transaction commits**, never inside it — a push
+dispatched from a transaction that then aborts would tell somebody they have a
+seat they do not have.
+
+**Tokens are keyed on the token, not the user.** A device is handed to more
+than one person over its life, so signing in on a shared phone reassigns it
+rather than leaving the previous account being notified. Tokens the provider
+reports as dead are **retired rather than deleted**, so one that comes back to
+life is visible rather than silently recreated.
+
+`AppNotification.time` is a phrase — "18 min ago", "Yesterday" — computed
+server-side, the same choice as `ProximityEstimate.label`. Every screen shows
+the same wording rather than inventing its own.
+
 ### Error handling
 
 Every error becomes one typed `AppError` and one envelope:
@@ -410,8 +489,8 @@ Each phase ends with `npm run verify` passing.
 | **3** | **me, institutions, campuses, areas, preferences, vehicles** | **Done** — 31 tests |
 | **4** | **Commutes, RideInstance generation, attendance, exceptions** | **Done** — 28 tests |
 | **5** | **Matching, search, nearby, blocks both directions** | **Done** — 27 tests, `explain()` asserts IXSCAN |
-| 6 | Seat requests, accept/decline | 10 concurrent vs 2 seats |
-| 7 | Notifications, push tokens, delivery job | Delivery never blocks response |
+| **6** | **Seat requests, accept/decline** | **Done** — 21 tests, 10-concurrent gate passes |
+| **7** | **Notifications, push tokens, delivery** | **Done** — delivery never blocks the response |
 | 8 | Safety, reports, support | |
 | 9 | Audit log + scope middleware — **before any admin route** | Member cannot read audit |
 | 10 | University Admin | IDOR suite |
