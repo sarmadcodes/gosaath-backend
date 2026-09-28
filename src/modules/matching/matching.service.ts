@@ -12,6 +12,7 @@ import {
   UserModel,
 } from "../../db/models/index.js";
 import { toPublicUser } from "../users/user.mapper.js";
+import { acceptedContactIds } from "../users/contact.service.js";
 import { proximityBetween } from "../location/location.service.js";
 import type {
   CommuteMatch,
@@ -306,6 +307,10 @@ export async function listMatches(userId: string): Promise<CommuteMatch[]> {
     .sort({ date: 1 })
     .lean();
 
+  // Phone numbers are for people who have agreed to share a ride, not for
+  // everyone a timetable happens to overlap with.
+  const mayContact = await acceptedContactIds(userId, ownerIds);
+
   const rideByDriver = new Map<string, (typeof openRides)[number]>();
   const takenByDriver = new Map<string, number>();
   for (const ride of openRides) {
@@ -357,9 +362,9 @@ export async function listMatches(userId: string): Promise<CommuteMatch[]> {
         : {}),
       ...(ride ? { rideId: ride._id.toString() } : {}),
       ...(takenByDriver.get(ownerId) ? { seatsTaken: takenByDriver.get(ownerId) } : {}),
-      // Served only for people the caller is actually matched with, and
-      // deliberately not part of PublicUser.
-      contactPhone: user.phone,
+      // Only once a seat request between the two has been accepted. See
+      // acceptedContactIds: a match on its own is not consent.
+      ...(mayContact.has(ownerId) ? { contactPhone: user.phone } : {}),
       areaMatch: (decisionByUser.get(ownerId) ?? "pending") as CommuteMatch["areaMatch"],
       ...(proximity ? { proximity } : {}),
     });

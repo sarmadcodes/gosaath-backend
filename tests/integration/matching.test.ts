@@ -375,15 +375,63 @@ describe("match list", () => {
     expect(response.json().data[0].user.name).toBeUndefined();
   });
 
-  it("gives a contact number, since a match is a real relationship", async () => {
+  it("hides the contact number until a request has been accepted", async () => {
     await giveCommute(alice);
     await giveCommute(bob);
 
+    // SYSTEM.md 4.5.3. Being matched is the system's guess that two
+    // timetables overlap; neither person has agreed to anything yet.
     const match = (await api("GET", "/matches", alice.access)).json().data[0];
-    // On the match, deliberately not on PublicUser — which is the shape
-    // everyone is exposed as everywhere.
-    expect(match.contactPhone).toBe("0300 1234567");
+    expect(match.contactPhone).toBeUndefined();
     expect(match.user.contactPhone).toBeUndefined();
+    expect((await api("GET", "/matches", alice.access)).body).not.toContain(
+      "0300 1234567",
+    );
+  });
+
+  it("gives the contact number once a seat request is accepted", async () => {
+    await giveCommute(alice);
+    await giveCommute(bob, {
+      intent: "offer",
+      seatsOffered: 2,
+      contribution: 200,
+      vehicleId: (
+        await VehicleModel.create({
+          ownerId: bob.id,
+          type: "car",
+          model: "Toyota Corolla",
+          plate: "ABC-123",
+          colour: "White",
+        })
+      )._id.toString(),
+    });
+
+    // Tomorrow onwards: today's instance may already have departed, and a
+    // seat cannot be requested on a ride that has happened.
+    const ride = await RideInstanceModel.findOne({
+      driverId: bob.id,
+      date: { $gt: new Date(Date.now() + 24 * 60 * 60 * 1000) },
+    })
+      .sort({ date: 1 })
+      .lean();
+    const created = await api("POST", `/rides/${ride!._id.toString()}/request`, alice.access, {
+      seats: 1,
+    });
+
+    // Still nothing while it is only pending.
+    const pending = (await api("GET", "/matches", alice.access)).json().data[0];
+    expect(pending.contactPhone).toBeUndefined();
+
+    await api("POST", `/requests/${created.json().data.id}/respond`, bob.access, {
+      action: "accept",
+    });
+
+    // Both directions: the person who asked and the person who said yes each
+    // need to be able to reach the other.
+    const forRider = (await api("GET", "/matches", alice.access)).json().data[0];
+    const forDriver = (await api("GET", "/matches", bob.access)).json().data[0];
+    expect(forRider.contactPhone).toBe("0300 1234567");
+    expect(forDriver.contactPhone).toBe("0300 1234567");
   });
 
   it("never returns a centroid or a raw distance", async () => {
