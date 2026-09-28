@@ -3,6 +3,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     globalSetup: ["./tests/setup/global.ts"],
+    // Runs inside each worker, before any test imports src/config/env.
+    setupFiles: ["./tests/setup/env.ts"],
     env: {
       NODE_ENV: "test",
       /**
