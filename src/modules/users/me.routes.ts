@@ -6,6 +6,7 @@ import * as areas from "../areas/area.service.js";
 import * as institutions from "../institutions/institution.service.js";
 import * as preferences from "../preferences/preferences.service.js";
 import * as vehicles from "../vehicles/vehicle.service.js";
+import { AreaModel, CampusModel, InstitutionModel } from "../../db/models/index.js";
 import {
   institutionIdSchema,
   requestBadgeSchema,
@@ -117,12 +118,6 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
   // somebody using the app, and leaving them open invites scraping of the
   // institution list.
 
-  app.get("/areas", async (request) => {
-    const { city } = z
-      .object({ city: z.string().trim().max(80).optional() })
-      .parse(request.query);
-    return { data: await areas.listAreas(city) };
-  });
 
   // Campuses are NOT declared here. Registration needs them before anybody is
   // signed in, so they live with the public institution routes — one
@@ -163,6 +158,52 @@ export async function publicInstitutionRoutes(
       return { data: await institutions.campusesFor(institutionId) };
     },
   );
+
+  /**
+   * Area names. Public: signup needs them before anybody is signed in, and
+   * they are sixteen Karachi neighbourhoods — nothing about any person, and
+   * never the centroids.
+   */
+  app.get("/areas", async (request) => {
+    const { city } = z
+      .object({ city: z.string().trim().max(80).optional() })
+      .parse(request.query);
+    return { data: await areas.listAreas(city) };
+  });
+
+  /**
+   * How the app's own reference ids map onto database ids.
+   *
+   * The app ships a registry of institutions, campuses and areas — logos,
+   * colours, names — keyed like "inst-szabist" and "area-gulshan". The API
+   * speaks database ids. This is the single table that lets the HTTP client
+   * translate between the two, so no screen has to change. Only live
+   * institutions and their active campuses are listed; nothing personal.
+   */
+  app.get("/reference", async () => {
+    const institutions = await InstitutionModel.find({ active: true, key: { $type: "string" } })
+      .select("key")
+      .lean();
+    const [areaRows, campusRows] = await Promise.all([
+      AreaModel.find({ active: true, key: { $type: "string" } }).select("key").lean(),
+      CampusModel.find({
+        active: true,
+        key: { $type: "string" },
+        institutionId: { $in: institutions.map((i) => i._id) },
+      })
+        .select("key")
+        .lean(),
+    ]);
+    const pair = (rows: Array<{ _id: { toString(): string }; key?: string | null }>) =>
+      rows.map((r) => ({ id: r._id.toString(), key: r.key as string }));
+    return {
+      data: {
+        areas: pair(areaRows),
+        institutions: pair(institutions),
+        campuses: pair(campusRows),
+      },
+    };
+  });
 
   app.post(
     "/institution-requests",

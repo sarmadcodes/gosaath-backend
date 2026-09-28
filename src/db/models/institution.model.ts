@@ -14,6 +14,13 @@ const INSTITUTION_TYPES = ["university", "college", "school", "organisation"];
 const institutionSchema = new Schema(
   {
     name: { type: String, required: true, trim: true, maxlength: 200 },
+    /**
+     * Stable public key, e.g. "inst-szabist". The mobile app ships its own
+     * registry of logos, colours and names keyed this way, so the key is how
+     * the app and the database agree on which record is which. Optional, so
+     * institutions created later in the admin panel need not have one.
+     */
+    key: { type: String, trim: true },
     shortName: { type: String, trim: true, maxlength: 40 },
     type: { type: String, enum: INSTITUTION_TYPES, required: true },
 
@@ -70,6 +77,7 @@ const institutionSchema = new Schema(
 
 // Registration resolves an email domain to an institution on every signup.
 institutionSchema.index({ emailDomains: 1 });
+institutionSchema.index({ key: 1 }, { unique: true, partialFilterExpression: { key: { $type: "string" } } });
 // The picker: active first, featured pinned to the top.
 institutionSchema.index({ active: 1, featured: -1, name: 1 });
 
@@ -84,6 +92,8 @@ const campusSchema = new Schema(
       required: true,
     },
     name: { type: String, required: true, trim: true, maxlength: 160 },
+    /** Stable public key matching the app, e.g. "camp-szabist-clifton". */
+    key: { type: String, trim: true },
     /** Approximate area the campus sits in. Never a precise address. */
     areaId: { type: Schema.Types.ObjectId, ref: "Area", default: null },
     active: { type: Boolean, default: true },
@@ -92,6 +102,7 @@ const campusSchema = new Schema(
 );
 
 campusSchema.index({ institutionId: 1, active: 1 });
+campusSchema.index({ key: 1 }, { unique: true, partialFilterExpression: { key: { $type: "string" } } });
 // One campus name per institution; two "Main Campus" rows help nobody.
 campusSchema.index({ institutionId: 1, name: 1 }, { unique: true });
 
@@ -143,6 +154,8 @@ export const InstitutionRequestModel = model(
 const areaSchema = new Schema(
   {
     name: { type: String, required: true, trim: true, maxlength: 120 },
+    /** Stable public key matching the app, e.g. "area-gulshan". */
+    key: { type: String, trim: true },
     city: { type: String, required: true, trim: true, maxlength: 80 },
     centroid: { type: centroid, required: true },
     active: { type: Boolean, default: true },
@@ -151,6 +164,7 @@ const areaSchema = new Schema(
 );
 
 areaSchema.index({ city: 1, active: 1 });
+areaSchema.index({ key: 1 }, { unique: true, partialFilterExpression: { key: { $type: "string" } } });
 areaSchema.index({ city: 1, name: 1 }, { unique: true });
 
 export type AreaDoc = InferSchemaType<typeof areaSchema>;

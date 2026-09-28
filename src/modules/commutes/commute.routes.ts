@@ -114,6 +114,12 @@ export async function commuteRoutes(app: FastifyInstance): Promise<void> {
     return { data: await week.skipDay(requireUser(request).id, id, day) };
   });
 
+  app.get("/commutes/:id/replacements", async (request) => {
+    const { id } = z.object({ id: objectId }).parse(request.params);
+    const { day } = z.object({ day: weekday }).strict().parse(request.query);
+    return { data: await week.replacementsFor(requireUser(request).id, id, day) };
+  });
+
   app.post("/commutes/:id/unavailable", async (request) => {
     const { id } = z.object({ id: objectId }).parse(request.params);
     const { days } = z

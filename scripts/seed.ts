@@ -36,7 +36,7 @@ let areasWritten = 0;
 for (const area of KARACHI_AREAS) {
   await AreaModel.updateOne(
     { city: area.city, name: area.name },
-    { $set: { centroid: area.centroid, active: true } },
+    { $set: { key: area.id, centroid: area.centroid, active: true } },
     { upsert: true },
   );
   areasWritten++;
@@ -57,9 +57,13 @@ const szabist = await InstitutionModel.findOneAndUpdate(
   { name: "SZABIST University" },
   {
     $set: {
+      key: "inst-szabist",
       shortName: "SZABIST",
       type: "university",
-      emailDomains: ["szabist.edu.pk", "szabist.pk"],
+      // Superset of what the app accepts. Which of these SZABIST actually
+      // issues to Karachi students is still to be confirmed with their IT —
+      // it is an activation checklist item, not something to guess at.
+      emailDomains: ["szabist.edu.pk", "szabist.pk", "khi.szabist.edu.pk"],
       city: "Karachi",
       active: true,
       brandColor: "#0C4DA1",
@@ -78,7 +82,7 @@ const clifton = await AreaModel.findOne({ name: "Clifton", city: "Karachi" });
 
 const campus = await CampusModel.findOneAndUpdate(
   { institutionId: szabist!._id, name: "Clifton Campus" },
-  { $set: { areaId: clifton?._id ?? null, active: true } },
+  { $set: { key: "camp-szabist-clifton", areaId: clifton?._id ?? null, active: true } },
   { upsert: true, new: true, setDefaultsOnInsert: true },
 );
 console.log(`  campus          Clifton Campus (${campus?._id.toString()})`);

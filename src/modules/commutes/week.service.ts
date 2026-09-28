@@ -9,6 +9,7 @@ import {
 } from "../../db/models/index.js";
 import { isoDate, startOfDay, upcomingDays } from "../../utils/dates.js";
 import { toPublicUser } from "../users/user.mapper.js";
+import { searchRides } from "../rides/ride.service.js";
 import type {
   CommuteDay,
   CommuteMember,
@@ -284,4 +285,21 @@ export async function setUnavailable(
     "driver unavailable",
   );
   return weekFor(userId, commuteId);
+}
+
+/**
+ * Cover for ONE day: other drivers at the same campus with a free seat on
+ * that weekday.
+ *
+ * Deliberately not the whole week. When a driver cannot make Thursday, the
+ * passengers need Thursday covered and nothing else — their seat on every
+ * other day stays exactly where it was.
+ */
+export async function replacementsFor(
+  userId: string,
+  commuteId: string,
+  day: Weekday,
+) {
+  await visibleCommute(userId, commuteId);
+  return searchRides(userId, { day });
 }
