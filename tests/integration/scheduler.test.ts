@@ -127,6 +127,12 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
+  // Left behind, these join another suite's member counts. Files share one
+  // database and run in sequence, so tidying up is part of the test.
+  await UserModel.deleteMany({ email: /@szabist\.edu\.pk$/ });
+  await CommuteModel.deleteMany({});
+  await RideInstanceModel.deleteMany({});
+  await AttendanceModel.deleteMany({});
   await app.close();
   await disconnectFromDatabase();
 });

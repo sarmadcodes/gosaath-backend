@@ -22,6 +22,7 @@ import { revokeAllSessions } from "../auth/token.service.js";
 import { emailService } from "../../services/email/index.js";
 import { notifyQuietly } from "../notifications/notification.service.js";
 import { logger } from "../../utils/logger.js";
+import { readUrlFor } from "../../services/storage/index.js";
 import type { FastifyRequest } from "fastify";
 
 /**
@@ -66,10 +67,17 @@ export async function overview(ctx: Ctx, institutionId?: string) {
 
   const [members, newMembers, activeCommutes, pendingVerifications, openReports, seatTotals, topAreas, daily] =
     await Promise.all([
-      UserModel.countDocuments({ ...scoped, emailVerifiedAt: { $ne: null } }),
-      UserModel.countDocuments({ ...scoped, emailVerifiedAt: { $ne: null }, createdAt: { $gte: weekAgo } }),
+      // `deletedAt: null` throughout: somebody who closed their account is
+      // not a member, and counting them would quietly overstate the pilot.
+      UserModel.countDocuments({ ...scoped, emailVerifiedAt: { $ne: null }, deletedAt: null }),
+      UserModel.countDocuments({
+        ...scoped,
+        emailVerifiedAt: { $ne: null },
+        deletedAt: null,
+        createdAt: { $gte: weekAgo },
+      }),
       CommuteModel.countDocuments({ ...scoped, status: "active" }),
-      UserModel.countDocuments({ ...scoped, badgeStatus: "pending" }),
+      UserModel.countDocuments({ ...scoped, badgeStatus: "pending", deletedAt: null }),
       ReportModel.countDocuments({ ...scoped, status: { $in: ["open", "escalated"] } }),
       CommuteModel.aggregate<{ offered: number }>([
         { $match: { ...scoped, status: "active" } },
@@ -154,7 +162,13 @@ export type MemberFilters = {
 
 function memberQuery(ctx: Ctx, filters: MemberFilters): Record<string, unknown> {
   // Built field by field from validated values. Never `find(req.query)`.
-  const query: Record<string, unknown> = { emailVerifiedAt: { $ne: null } };
+  // Deleted accounts keep their row so reports and audit entries still point
+  // somewhere, but they are not members any more and must not appear in a
+  // list an admin acts on — there is nobody there to suspend or verify.
+  const query: Record<string, unknown> = {
+    emailVerifiedAt: { $ne: null },
+    deletedAt: null,
+  };
   if (filters.campusId) query["campusId"] = new Types.ObjectId(filters.campusId);
   if (filters.userType) query["userType"] = filters.userType;
   if (filters.badgeStatus) query["badgeStatus"] = filters.badgeStatus;
@@ -345,6 +359,7 @@ export async function revealPhone(ctx: Ctx, memberId: string, reason: string) {
 export async function verificationQueue(ctx: Ctx, institutionId?: string) {
   const users = await UserModel.find({
     badgeStatus: "pending",
+    deletedAt: null,
     ...institutionFilter(ctx.admin, institutionId),
   })
     .select("+badgeDocumentUrl name email userType campusId badgeRequestedAt institutionId")
@@ -358,16 +373,21 @@ export async function verificationQueue(ctx: Ctx, institutionId?: string) {
     .lean();
   const campusName = new Map(campuses.map((c) => [c._id.toString(), c.name]));
 
-  return users.map((u) => ({
-    id: u._id.toString(),
-    name: u.name,
-    email: u.email,
-    userType: u.userType,
-    campusName: campusName.get(u.campusId.toString()) ?? "",
-    // Only here. The identity document is select:false everywhere else.
-    documentUrl: u.badgeDocumentUrl ?? null,
-    requestedAt: u.badgeRequestedAt ? u.badgeRequestedAt.toISOString() : null,
-  }));
+  return Promise.all(
+    users.map(async (u) => ({
+      id: u._id.toString(),
+      name: u.name,
+      email: u.email,
+      userType: u.userType,
+      campusName: campusName.get(u.campusId.toString()) ?? "",
+      // Only here. The identity document is select:false everywhere else,
+      // and what is handed over is a URL that stops working in fifteen
+      // minutes — long enough to review a card, short enough that a copied
+      // link in a browser history is not a copy of somebody's student ID.
+      documentUrl: await readUrlFor(u.badgeDocumentUrl),
+      requestedAt: u.badgeRequestedAt ? u.badgeRequestedAt.toISOString() : null,
+    })),
+  );
 }
 
 export const REJECTION_REASONS = [

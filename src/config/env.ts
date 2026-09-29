@@ -45,6 +45,25 @@ const schema = z
      */
     SCHEDULER_INTERVAL_MIN: z.coerce.number().int().min(0).max(1440).default(5),
 
+    /**
+     * Where uploaded files live.
+     *
+     * "local" writes to disk and is for development only: it survives neither
+     * a second server nor a redeploy that replaces the machine. Outside
+     * development the check below insists on real object storage.
+     */
+    UPLOADS_PROVIDER: z.enum(["s3", "local"]).default("local"),
+    UPLOADS_DIR: z.string().default("var/uploads"),
+    /** This server's own address, for signing local upload URLs. */
+    PUBLIC_URL: z.string().url().default("http://localhost:4000"),
+
+    /** S3-compatible: AWS S3, Cloudflare R2, anything else that speaks it. */
+    S3_BUCKET: z.string().optional(),
+    S3_REGION: z.string().default("auto"),
+    S3_ENDPOINT: z.string().url().optional(),
+    S3_ACCESS_KEY_ID: optionalSecret(1),
+    S3_SECRET_ACCESS_KEY: optionalSecret(1),
+
     MONGODB_URI: z.string().min(1),
     MONGODB_DB: z.string().min(1).default("gosaath"),
     /** Pool ceiling. Sized to the deployment, not left to the driver default. */
@@ -102,6 +121,18 @@ const schema = z
   .superRefine((value, ctx) => {
     // A provider selected without its credential fails at the first send,
     // which in practice means the first user to register. Fail at boot.
+    if (value.UPLOADS_PROVIDER === "s3") {
+      for (const key of ["S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"] as const) {
+        if (!value[key]) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} is required when UPLOADS_PROVIDER is s3`,
+          });
+        }
+      }
+    }
+
     if (value.EMAIL_PROVIDER === "resend" && !value.RESEND_API_KEY) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -119,6 +150,16 @@ const schema = z
           message: "JWT_SECRET is required outside development",
         });
       }
+      if (value.UPLOADS_PROVIDER === "local") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["UPLOADS_PROVIDER"],
+          message:
+            "UPLOADS_PROVIDER must be s3 outside development — local disk does " +
+            "not survive a redeploy, and a second server cannot read it",
+        });
+      }
+
       if (value.EMAIL_PROVIDER === "console") {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,

@@ -1,3 +1,4 @@
+import { env } from "../../config/env.js";
 import type { PublicUser, User } from "../../contract/types.js";
 
 /**
@@ -35,7 +36,7 @@ export function toUser(doc: UserLike): User {
     name: doc.name,
     email: doc.email,
     phone: doc.phone,
-    photoUrl: doc.photoUrl ?? null,
+    photoUrl: photoUrlFor(doc),
     userType: doc.userType as User["userType"],
     institutionId: doc.institutionId.toString(),
     campusId: doc.campusId.toString(),
@@ -58,13 +59,32 @@ export function toUser(doc: UserLike): User {
  *
  * Adding a field here is a product decision, not a technical one.
  */
+/**
+ * Where a stored photo is served from.
+ *
+ * Not the storage key, and not a signed URL either. A signed URL expires,
+ * which would mean every serialised user carried a deadline and a cached
+ * screen full of matches would start showing broken images a quarter of an
+ * hour later. This address is stable; the request behind it is authenticated
+ * and redirects to a signed URL good for the next few minutes.
+ *
+ * Photos uploaded before object storage existed are already URLs and are
+ * passed through unchanged.
+ */
+export function photoUrlFor(doc: { _id: { toString(): string }; photoUrl?: string | null }): string | null {
+  const stored = doc.photoUrl;
+  if (!stored) return null;
+  if (stored.startsWith("http://") || stored.startsWith("https://")) return stored;
+  return `${env.PUBLIC_URL}/api/v1/photos/${doc._id.toString()}`;
+}
+
 export function toPublicUser(doc: UserLike): PublicUser {
   return {
     id: doc._id.toString(),
     // Split rather than stored separately: the account holds one name, and
     // showing "Ayesha" where the record says "Ayesha Khan" is the whole point.
     firstName: doc.name.trim().split(/\s+/)[0] ?? doc.name.trim(),
-    photoUrl: doc.photoUrl ?? null,
+    photoUrl: photoUrlFor(doc),
     verified: doc.badgeStatus === "approved",
   };
 }

@@ -24,6 +24,7 @@ import {
 } from "../../db/models/index.js";
 import { hashPassword, verifyPassword } from "../../utils/crypto.js";
 import { cancelFutureInstances } from "../commutes/instance.service.js";
+import { confirmUploaded, keyBelongsTo, removeFile } from "../../services/storage/index.js";
 import { toUser } from "./user.mapper.js";
 import type { User } from "../../contract/types.js";
 import type { UpdateMeBody } from "./me.schemas.js";
@@ -79,13 +80,35 @@ export async function updateMe(
   return toUser(user);
 }
 
+/**
+ * Sets, replaces or clears the profile photo.
+ *
+ * Takes the key of a file the person has already uploaded, not a URL and not
+ * the bytes. The key is checked against their own id — a key belonging to
+ * somebody else is refused however it was obtained — and the file is checked
+ * to have actually arrived, so nobody ends up with a photo that is a broken
+ * image nobody can explain.
+ */
 export async function setPhoto(
   userId: string,
-  uri: string | null,
+  key: string | null,
 ): Promise<User> {
   const user = await load(userId);
-  user.photoUrl = uri;
+
+  if (key !== null) {
+    if (!keyBelongsTo(key, "photo", userId)) {
+      throw new UnprocessableError("That upload does not belong to this account.");
+    }
+    await confirmUploaded(key, "photo");
+  }
+
+  // The old one goes: nobody is served it any more, and a bucket that only
+  // ever grows is a bill that only ever grows.
+  const previous = user.photoUrl;
+  user.photoUrl = key;
   await user.save();
+  if (previous && previous !== key) await removeFile(previous);
+
   return toUser(user);
 }
 
@@ -98,9 +121,16 @@ export async function setPhoto(
  */
 export async function requestBadge(
   userId: string,
-  documentUri: string,
+  documentKey: string,
 ): Promise<User> {
   const user = await load(userId, true);
+
+  // Their own upload, and one that arrived. An admin opening a review to find
+  // nothing there is worse than the upload having failed loudly.
+  if (!keyBelongsTo(documentKey, "badge", userId)) {
+    throw new UnprocessableError("That upload does not belong to this account.");
+  }
+  await confirmUploaded(documentKey, "badge");
 
   if (user.badgeStatus === "approved") {
     throw new BusinessRuleError("Your badge is already approved.");
@@ -111,10 +141,17 @@ export async function requestBadge(
     throw new BusinessRuleError("Your badge request is already being reviewed.");
   }
 
+  const previousDocument = user.badgeDocumentUrl;
   user.badgeStatus = "pending";
-  user.badgeDocumentUrl = documentUri;
+  user.badgeDocumentUrl = documentKey;
   user.badgeRequestedAt = new Date();
   await user.save();
+
+  if (previousDocument && previousDocument !== documentKey) {
+    // A rejected application's document has served its purpose. Keeping a
+    // student card longer than the review that needed it is not ours to do.
+    await removeFile(previousDocument);
+  }
 
   logger.info({ userId }, "badge requested");
   return toUser(user);
@@ -264,6 +301,10 @@ export async function deleteAccount(
   // Blocks are deliberately kept. They are a safety decision somebody else
   // made, and they are silent — restoring contact by deleting an account
   // would hand exactly the wrong person a way around being blocked.
+
+  // The files go too. "Removes name, photo, phone, email, documents" is not
+  // satisfied by forgetting where a student card is while it sits in a bucket.
+  await Promise.all([removeFile(user.photoUrl), removeFile(user.badgeDocumentUrl)]);
 
   user.name = "Former member";
   user.email = `deleted+${user._id.toString()}@gosaath.invalid`;

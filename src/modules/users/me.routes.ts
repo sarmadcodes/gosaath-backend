@@ -62,13 +62,13 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.put("/me/photo", async (request) => {
-    const { uri } = setPhotoSchema.parse(request.body);
-    return { data: await me.setPhoto(requireUser(request).id, uri) };
+    const { key } = setPhotoSchema.parse(request.body);
+    return { data: await me.setPhoto(requireUser(request).id, key) };
   });
 
   app.post("/me/badge", async (request) => {
-    const { documentUri } = requestBadgeSchema.parse(request.body);
-    return { data: await me.requestBadge(requireUser(request).id, documentUri) };
+    const { key } = requestBadgeSchema.parse(request.body);
+    return { data: await me.requestBadge(requireUser(request).id, key) };
   });
 
   app.post("/me/institutions", async (request) => {

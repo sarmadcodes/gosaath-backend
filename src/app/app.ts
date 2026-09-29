@@ -15,6 +15,7 @@ import {
   meRoutes,
   publicInstitutionRoutes,
 } from "../modules/users/me.routes.js";
+import { uploadRoutes } from "../modules/uploads/upload.routes.js";
 import { commuteRoutes } from "../modules/commutes/commute.routes.js";
 import { matchRoutes } from "../modules/matching/match.routes.js";
 import { notificationRoutes } from "../modules/notifications/notification.routes.js";
@@ -121,6 +122,7 @@ export async function buildApp(
       await api.register(authRoutes, { prefix: "/auth" });
       // Public: registration needs the institution picker before sign-in.
       await api.register(publicInstitutionRoutes);
+      await api.register(uploadRoutes);
       await api.register(meRoutes);
       await api.register(commuteRoutes);
       await api.register(matchRoutes);

@@ -38,13 +38,23 @@ export const updateMeSchema = z
     message: "Nothing to update",
   });
 
-export const setPhotoSchema = z
-  .object({ uri: z.string().url().max(2000).nullable() })
-  .strict();
+/**
+ * A storage key, not a URL.
+ *
+ * The client uploads first and hands back the key it was given. Accepting a
+ * URL would let anyone point their profile photo at any address on the
+ * internet, which is both an outbound request we make on their behalf and a
+ * way to serve something we never saw.
+ */
+const storageKey = z
+  .string()
+  .min(3)
+  .max(300)
+  .regex(/^[a-z]+s\/[0-9a-f]{24}\/[A-Za-z0-9._-]+$/, "Not a valid upload");
 
-export const requestBadgeSchema = z
-  .object({ documentUri: z.string().url().max(2000) })
-  .strict();
+export const setPhotoSchema = z.object({ key: storageKey.nullable() }).strict();
+
+export const requestBadgeSchema = z.object({ key: storageKey }).strict();
 
 export const institutionIdSchema = z
   .object({ institutionId: objectId })

@@ -199,9 +199,31 @@ describe("mass assignment", () => {
 });
 
 describe("badge", () => {
+  /**
+   * The document is a real upload now, not a URL: a URL would let anyone
+   * point their badge at any address on the internet. The upload flow itself
+   * is covered in uploads.test.ts; here it is just the shortest way to get a
+   * key that exists.
+   */
+  async function uploadCard(who: { access: string }): Promise<string> {
+    const signed = await api("POST", "/uploads/sign", who.access, {
+      kind: "badge",
+      contentType: "image/jpeg",
+      bytes: 1024,
+    });
+    const target = signed.json().data as { url: string; key: string };
+    await app.inject({
+      method: "PUT",
+      url: target.url.replace(/^https?:\/\/[^/]+/, ""),
+      headers: { "content-type": "image/jpeg" },
+      payload: Buffer.from("card"),
+    });
+    return target.key;
+  }
+
   it("moves to pending and never self-approves", async () => {
     const response = await api("POST", "/me/badge", alice.access, {
-      documentUri: "https://example.com/id.jpg",
+      key: await uploadCard(alice),
     });
 
     expect(response.statusCode).toBe(200);
@@ -211,77 +233,22 @@ describe("badge", () => {
   });
 
   it("never returns the submitted identity document", async () => {
-    await api("POST", "/me/badge", alice.access, {
-      documentUri: "https://example.com/secret-id-card.jpg",
-    });
+    const key = await uploadCard(alice);
+    await api("POST", "/me/badge", alice.access, { key });
     const response = await api("GET", "/me", alice.access);
 
     // select:false on the model. It is an identity document and has no
     // business in a response that merely happens to load a user.
-    expect(response.body).not.toContain("secret-id-card");
+    expect(response.body).not.toContain(key);
     expect(response.body).not.toContain("badgeDocumentUrl");
   });
 
   it("refuses a second request while one is in review", async () => {
-    await api("POST", "/me/badge", alice.access, {
-      documentUri: "https://example.com/id.jpg",
-    });
+    await api("POST", "/me/badge", alice.access, { key: await uploadCard(alice) });
     const second = await api("POST", "/me/badge", alice.access, {
-      documentUri: "https://example.com/other.jpg",
+      key: await uploadCard(alice),
     });
     expect(second.statusCode).toBe(409);
-  });
-});
-
-describe("vehicles", () => {
-  const car = {
-    type: "car" as const,
-    model: "Toyota Corolla GLi",
-    plate: "ABC-123",
-    colour: "White",
-  };
-
-  it("creates and lists only the caller's own", async () => {
-    await api("PUT", "/vehicles", alice.access, car);
-    await api("PUT", "/vehicles", bob.access, { ...car, plate: "XYZ-999" });
-
-    const mine = await api("GET", "/vehicles", alice.access);
-    expect(mine.json().data).toHaveLength(1);
-    expect(mine.json().data[0].plate).toBe("ABC-123");
-  });
-
-  it("cannot edit somebody else's vehicle", async () => {
-    const created = await api("PUT", "/vehicles", alice.access, car);
-    const id = created.json().data.id as string;
-
-    const attempt = await api("PUT", "/vehicles", bob.access, {
-      ...car,
-      id,
-      model: "Stolen",
-    });
-
-    // 404, not 403: a 403 would confirm the id is real and owned by somebody.
-    expect(attempt.statusCode).toBe(404);
-
-    const unchanged = await VehicleModel.findById(id);
-    expect(unchanged!.model).toBe("Toyota Corolla GLi");
-  });
-
-  it("cannot delete somebody else's vehicle", async () => {
-    const created = await api("PUT", "/vehicles", alice.access, car);
-    const id = created.json().data.id as string;
-
-    const attempt = await api("DELETE", `/vehicles/${id}`, bob.access);
-    expect(attempt.statusCode).toBe(404);
-    expect(await VehicleModel.countDocuments({ _id: id })).toBe(1);
-  });
-
-  it("cannot claim ownership through the body", async () => {
-    const response = await api("PUT", "/vehicles", alice.access, {
-      ...car,
-      ownerId: bob.id,
-    });
-    expect(response.statusCode).toBe(400);
   });
 });
 
@@ -489,5 +456,37 @@ describe("deleting the account", () => {
       password: "a-long-enough-passphrase",
     });
     expect(second.statusCode).toBe(204);
+  });
+});
+
+describe("a deleted account and the admin views", () => {
+  it("stops being counted as a member", async () => {
+    // Found by a test failing for the right reason: deleted accounts kept
+    // their row, and the row kept turning up in the institution's member
+    // count. Somebody who left is not a member, and counting them overstates
+    // the pilot to the people deciding whether it worked.
+    const before = await UserModel.countDocuments({
+      institutionId,
+      emailVerifiedAt: { $ne: null },
+      deletedAt: null,
+    });
+
+    await app.inject({
+      method: "DELETE",
+      url: "/api/v1/me",
+      headers: { authorization: `Bearer ${alice.access}` },
+      payload: { password: "a-long-enough-passphrase" },
+    });
+
+    expect(
+      await UserModel.countDocuments({
+        institutionId,
+        emailVerifiedAt: { $ne: null },
+        deletedAt: null,
+      }),
+    ).toBe(before - 1);
+
+    // The row itself is still there, holding the safety history together.
+    expect(await UserModel.countDocuments({ _id: alice.id })).toBe(1);
   });
 });

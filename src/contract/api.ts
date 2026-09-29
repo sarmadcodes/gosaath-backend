@@ -83,12 +83,36 @@ export interface InstitutionsApi {
   }): Promise<InstitutionRequest>;
 }
 
+/** Where to send the bytes, and what to call the file afterwards. */
+export type UploadTarget = {
+  url: string;
+  headers: Record<string, string>;
+  key: string;
+  expiresInSeconds: number;
+};
+
+export interface UploadsApi {
+  /**
+   * Asks permission to upload one file, and says where to put it.
+   *
+   * The bytes then go straight to storage, not through the API: a photo
+   * relayed through the server is the same photo, slower, and a memory spike
+   * per upload.
+   */
+  sign(input: {
+    kind: "photo" | "badge";
+    contentType: string;
+    bytes: number;
+  }): Promise<UploadTarget>;
+}
+
 export interface MeApi {
   get(): Promise<User>;
   update(patch: Partial<User>): Promise<User>;
-  setPhoto(uri: string | null): Promise<User>;
-  /** Submits proof for the optional verified badge. */
-  requestBadge(documentUri: string): Promise<User>;
+  /** Takes the key from a finished upload, or null to remove the photo. */
+  setPhoto(key: string | null): Promise<User>;
+  /** Submits proof for the optional verified badge, by upload key. */
+  requestBadge(key: string): Promise<User>;
   addInstitution(institutionId: string): Promise<User>;
   removeInstitution(institutionId: string): Promise<User>;
   /**
@@ -274,6 +298,7 @@ export interface PreferencesApi {
 }
 
 export interface Api {
+  uploads: UploadsApi;
   auth: AuthApi;
   institutions: InstitutionsApi;
   me: MeApi;
