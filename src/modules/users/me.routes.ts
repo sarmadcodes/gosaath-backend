@@ -12,6 +12,7 @@ import {
   requestBadgeSchema,
   setPhotoSchema,
   updateMeSchema,
+  deleteAccountSchema,
 } from "./me.schemas.js";
 
 /**
@@ -74,6 +75,20 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
     const { institutionId } = institutionIdSchema.parse(request.body);
     return { data: await me.addInstitution(requireUser(request).id, institutionId) };
   });
+
+  app.delete(
+    "/me",
+    {
+      // Destructive and password-guarded, so the limit is there to stop the
+      // endpoint being used to test passwords, not to stop deletions.
+      config: { rateLimit: { max: 5, timeWindow: "1 hour" } },
+    },
+    async (request, reply) => {
+      const { password } = deleteAccountSchema.parse(request.body);
+      await me.deleteAccount(requireUser(request).id, password);
+      return reply.code(204).send();
+    },
+  );
 
   app.delete("/me/institutions/:institutionId", async (request) => {
     const { institutionId } = institutionIdSchema.parse(request.params);

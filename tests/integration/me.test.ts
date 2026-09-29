@@ -8,6 +8,7 @@ import {
   InstitutionModel,
   InstitutionRequestModel,
   PreferencesModel,
+  PushTokenModel,
   SessionModel,
   UserModel,
   VehicleModel,
@@ -392,5 +393,101 @@ describe("areas", () => {
     expect(response.body).not.toContain("centroid");
     expect(response.body).not.toContain("lat");
     expect(response.body).not.toContain("lng");
+  });
+});
+
+describe("deleting the account", () => {
+  const api = (method: "DELETE", url: string, token: string, payload?: object) =>
+    app.inject({
+      method,
+      url: `/api/v1${url}`,
+      headers: { authorization: `Bearer ${token}` },
+      ...(payload ? { payload } : {}),
+    });
+
+  it("refuses without the right password", async () => {
+    const response = await api("DELETE", "/me", alice.access, {
+      password: "not-the-password",
+    });
+    expect(response.statusCode).toBe(401);
+
+    const still = await UserModel.findById(alice.id);
+    expect(still!.deletedAt).toBeNull();
+  });
+
+  it("removes what identifies a person and keeps the row", async () => {
+    const response = await api("DELETE", "/me", alice.access, {
+      password: "a-long-enough-passphrase",
+    });
+    expect(response.statusCode).toBe(204);
+
+    // SYSTEM.md 4.5.8. The row survives because reports, blocks and audit
+    // entries point at it; a hard delete would erase a safety record, which
+    // would make deleting your account the way to undo what you did.
+    const after = await UserModel.findById(alice.id).select("+badgeDocumentUrl");
+    expect(after).not.toBeNull();
+    expect(after!.deletedAt).not.toBeNull();
+    expect(after!.name).toBe("Former member");
+    // Not an empty string: the schema requires a phone, and "every member has
+    // a number" is worth keeping. It is not a dialable one.
+    expect(after!.phone).toBe("removed");
+    expect(after!.photoUrl).toBeNull();
+    expect(after!.badgeDocumentUrl).toBeNull();
+    expect(after!.email).not.toContain("szabist");
+  });
+
+  it("locks the account out everywhere", async () => {
+    await api("DELETE", "/me", alice.access, {
+      password: "a-long-enough-passphrase",
+    });
+
+    // Every session is gone, so the refresh token in the app is worthless.
+    expect(await SessionModel.countDocuments({ userId: alice.id })).toBe(0);
+
+    const restored = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/restore",
+      payload: { token: alice.token },
+    });
+    expect(restored.json().data).toBeNull();
+
+    // And the old password cannot be used to sign back in.
+    const login = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: "alice@szabist.edu.pk", password: "a-long-enough-passphrase" },
+    });
+    expect(login.statusCode).toBeGreaterThanOrEqual(400);
+  });
+
+  it("takes the vehicles and push tokens with it", async () => {
+    await VehicleModel.create({
+      ownerId: alice.id,
+      type: "car",
+      model: "Toyota Corolla",
+      plate: "BKT-512",
+      colour: "White",
+    });
+
+    await api("DELETE", "/me", alice.access, {
+      password: "a-long-enough-passphrase",
+    });
+
+    expect(await VehicleModel.countDocuments({ ownerId: alice.id })).toBe(0);
+    expect(await PushTokenModel.countDocuments({ userId: alice.id })).toBe(0);
+  });
+
+  it("is safe to ask for twice", async () => {
+    const first = await api("DELETE", "/me", alice.access, {
+      password: "a-long-enough-passphrase",
+    });
+    expect(first.statusCode).toBe(204);
+
+    // The access token is still valid for its remaining minutes, and a
+    // retry must not throw at somebody who has already gone.
+    const second = await api("DELETE", "/me", alice.access, {
+      password: "a-long-enough-passphrase",
+    });
+    expect(second.statusCode).toBe(204);
   });
 });

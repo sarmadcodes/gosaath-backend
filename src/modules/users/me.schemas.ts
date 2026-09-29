@@ -51,3 +51,14 @@ export const institutionIdSchema = z
   .strict();
 
 export type UpdateMeBody = z.infer<typeof updateMeSchema>;
+
+/**
+ * Closing the account.
+ *
+ * The password is re-checked rather than trusted from the session: the
+ * session proves the phone was unlocked at some point, not that the person
+ * holding it now means to delete the account.
+ */
+export const deleteAccountSchema = z
+  .object({ password: z.string().min(1, "Enter your password") })
+  .strict();

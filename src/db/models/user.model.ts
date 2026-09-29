@@ -86,6 +86,18 @@ const userSchema = new Schema(
 
     suspendedAt: { type: Date, default: null },
     suspendedReason: { type: String, default: null },
+
+    /**
+     * When the person closed their account.
+     *
+     * The row survives deletion, emptied of anything personal. Reports,
+     * blocks and audit entries point at a user id, and a hard delete would
+     * either break those or erase a safety record — which would make deleting
+     * your account the way to erase what you did. `suspendedAt` is set at the
+     * same time, which is what actually locks the account out, through the
+     * same check a suspension uses.
+     */
+    deletedAt: { type: Date, default: null },
   },
   baseOptions,
 );

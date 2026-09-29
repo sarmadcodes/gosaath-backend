@@ -6,11 +6,24 @@ import {
   NotFoundError,
   UnprocessableError,
 } from "../../utils/errors.js";
+import { randomUUID } from "node:crypto";
 import {
+  AreaMatchModel,
   AreaModel,
+  AttendanceModel,
+  CommuteModel,
   InstitutionModel,
+  NotificationModel,
+  PreferencesModel,
+  PushTokenModel,
+  RideInstanceModel,
+  SeatRequestModel,
+  SessionModel,
   UserModel,
+  VehicleModel,
 } from "../../db/models/index.js";
+import { hashPassword, verifyPassword } from "../../utils/crypto.js";
+import { cancelFutureInstances } from "../commutes/instance.service.js";
 import { toUser } from "./user.mapper.js";
 import type { User } from "../../contract/types.js";
 import type { UpdateMeBody } from "./me.schemas.js";
@@ -169,4 +182,105 @@ export async function removeInstitution(
 
   await user.save();
   return toUser(user);
+}
+
+/**
+ * Closes an account for good.
+ *
+ * SYSTEM.md 4.5.8: "Delete account anonymises reports (safety history
+ * survives) but removes name, photo, phone, email, documents."
+ *
+ * So this is not a hard delete. Reports, blocks and audit entries point at a
+ * user id; deleting the row would either break them or erase a safety record,
+ * and erasing the record would make deleting your account the way to undo
+ * what you did. The row stays, emptied of everything that identifies a person,
+ * and locked out through the same check that locks out a suspension.
+ *
+ * What goes with it matters just as much as the personal fields: the commute
+ * stops, future rides are cancelled so their passengers stop planning around
+ * them, seats held on other people's rides are given back, and every session
+ * and push token is dropped so the phone in someone's hand stops being a way
+ * in and stops receiving notifications for an account that no longer exists.
+ */
+export async function deleteAccount(
+  userId: string,
+  password: string,
+): Promise<void> {
+  const user = await UserModel.findById(userId).select("+passwordHash");
+  if (!user) throw new NotFoundError("That account was not found.");
+  if (user.deletedAt) return;
+
+  // Asked for again because this cannot be undone: an unlocked phone left on
+  // a table should not be enough to close somebody's account.
+  const ok = await verifyPassword(user.passwordHash, password);
+  if (!ok) throw new AuthenticationError("That password is not right.");
+
+  const now = new Date();
+
+  // Their own commutes stop, and the rides they were driving are cancelled
+  // rather than left for passengers to turn up to.
+  const commutes = await CommuteModel.find({ ownerId: user._id }).select("_id").lean();
+  for (const commute of commutes) {
+    await cancelFutureInstances(commute._id, "commuteCancelled");
+  }
+  await CommuteModel.updateMany(
+    { ownerId: user._id },
+    { $set: { status: "cancelled" } },
+  );
+
+  // Seats they held on other people's rides go back, so somebody else can
+  // have them rather than the ride running with a phantom passenger.
+  const held = await AttendanceModel.find({
+    userId: user._id,
+    role: "passenger",
+    status: { $in: ["confirmed", "pending"] },
+  })
+    .select("rideInstanceId")
+    .lean();
+
+  for (const row of held) {
+    await RideInstanceModel.updateOne(
+      { _id: row.rideInstanceId, seatsTaken: { $gt: 0 } },
+      { $inc: { seatsTaken: -1 } },
+    );
+  }
+  await AttendanceModel.deleteMany({ userId: user._id });
+  await SeatRequestModel.updateMany(
+    { requesterId: user._id, status: "pending" },
+    { $set: { status: "cancelled", respondedAt: now } },
+  );
+
+  await Promise.all([
+    SessionModel.deleteMany({ userId: user._id }),
+    PushTokenModel.deleteMany({ userId: user._id }),
+    VehicleModel.deleteMany({ ownerId: user._id }),
+    NotificationModel.deleteMany({ userId: user._id }),
+    PreferencesModel.deleteMany({ userId: user._id }),
+    AreaMatchModel.deleteMany({
+      $or: [{ userId: user._id }, { matchedUserId: user._id }],
+    }),
+  ]);
+
+  // Blocks are deliberately kept. They are a safety decision somebody else
+  // made, and they are silent — restoring contact by deleting an account
+  // would hand exactly the wrong person a way around being blocked.
+
+  user.name = "Former member";
+  user.email = `deleted+${user._id.toString()}@gosaath.invalid`;
+  // A marker rather than an empty string: `phone` is required, and a schema
+  // that guarantees every member has a number is worth more than the small
+  // satisfaction of storing nothing at all. It is not a dialable number.
+  user.phone = "removed";
+  user.photoUrl = null;
+  user.badgeDocumentUrl = null;
+  user.badgeStatus = "none";
+  user.passwordHash = await hashPassword(randomUUID());
+  user.deletedAt = now;
+  // The existing lockout: login, refresh and restore all refuse a suspended
+  // account, so this needs no new check anywhere.
+  user.suspendedAt = now;
+  user.suspendedReason = "Account deleted by the member.";
+  await user.save();
+
+  logger.info({ userId }, "account deleted");
 }

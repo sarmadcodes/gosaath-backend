@@ -91,6 +91,17 @@ export interface MeApi {
   requestBadge(documentUri: string): Promise<User>;
   addInstitution(institutionId: string): Promise<User>;
   removeInstitution(institutionId: string): Promise<User>;
+  /**
+   * Closes the account for good.
+   *
+   * The password is asked for again because this cannot be undone and a
+   * borrowed unlocked phone should not be enough to do it.
+   *
+   * Personal details go; the safety record stays, unlinked from a name. A
+   * report has to survive the reported person deleting their account, or
+   * deleting it becomes the way to erase what you did.
+   */
+  deleteAccount(password: string): Promise<void>;
 }
 
 export type CommuteInput = {
