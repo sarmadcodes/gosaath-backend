@@ -115,6 +115,20 @@ const rideInstanceSchema = new Schema(
      */
     seatsOffered: { type: Number, min: 0, max: 8, default: 0 },
     seatsTaken: { type: Number, min: 0, default: 0 },
+
+    /**
+     * What the scheduler has already done to this ride.
+     *
+     * Each marker is set in the same guarded update that performs the work,
+     * with the marker's own absence as the filter. That is what makes the
+     * scheduler safe to run every few minutes, twice at once, or again after
+     * a restart: the second attempt matches nothing, so nobody is reminded
+     * twice about the same ride.
+     */
+    autoConfirmedAt: { type: Date, default: null },
+    orphanNotifiedAt: { type: Date, default: null },
+    remindedDayBeforeAt: { type: Date, default: null },
+    remindedAtDepartureAt: { type: Date, default: null },
   },
   baseOptions,
 );

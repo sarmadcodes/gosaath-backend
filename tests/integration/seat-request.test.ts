@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../../src/app/app.js";
 import { connectToDatabase, disconnectFromDatabase } from "../../src/db/mongodb.js";
@@ -9,6 +9,7 @@ import {
   CampusModel,
   CommuteModel,
   InstitutionModel,
+  NotificationModel,
   RideInstanceModel,
   SeatRequestModel,
   SessionModel,
@@ -622,5 +623,72 @@ describe("the number plate", () => {
     // `other` had nothing to do with this ride, so nothing changes for them.
     const seen = (await api("GET", `/rides/${rideId}`, other.access)).json().data;
     expect(seen.plateVisibility).toBe("masked");
+  });
+});
+
+describe("when notifications fail", () => {
+  /**
+   * A seat is a business fact; telling someone about it is a side effect.
+   * If the notification write fails, the seat must still be theirs — the
+   * alternative is a driver tapping accept, seeing an error, tapping again,
+   * and a passenger holding a seat nobody believes in.
+   */
+  it("still accepts the seat when the notification write throws", async () => {
+    const rideId = await offerRide(driver, 2);
+    await giveCommute(rider);
+    const created = await api("POST", `/rides/${rideId}/request`, rider.access, {
+      seats: 1,
+    });
+
+    const failing = vi
+      .spyOn(NotificationModel, "create")
+      .mockRejectedValue(new Error("notification store is down") as never);
+
+    try {
+      const response = await api(
+        "POST",
+        `/requests/${created.json().data.id}/respond`,
+        driver.access,
+        { action: "accept" },
+      );
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().data.status).toBe("accepted");
+      expect(failing).toHaveBeenCalled();
+    } finally {
+      failing.mockRestore();
+    }
+
+    // The seat was really taken, not just reported as taken.
+    const instance = await RideInstanceModel.findById(rideId);
+    expect(instance!.seatsTaken).toBe(1);
+    const attendance = await AttendanceModel.countDocuments({
+      rideInstanceId: rideId,
+      userId: rider.id,
+      status: "confirmed",
+    });
+    expect(attendance).toBe(1);
+  });
+
+  it("still records the request when the driver cannot be told", async () => {
+    const rideId = await offerRide(driver);
+    await giveCommute(rider);
+
+    const failing = vi
+      .spyOn(NotificationModel, "create")
+      .mockRejectedValue(new Error("notification store is down") as never);
+
+    try {
+      const response = await api("POST", `/rides/${rideId}/request`, rider.access, {
+        seats: 1,
+      });
+      expect(response.statusCode).toBe(200);
+    } finally {
+      failing.mockRestore();
+    }
+
+    expect(
+      await SeatRequestModel.countDocuments({ requesterId: rider.id, status: "pending" }),
+    ).toBe(1);
   });
 });

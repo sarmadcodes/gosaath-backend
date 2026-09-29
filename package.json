@@ -20,7 +20,8 @@
     "db:indexes": "tsx scripts/ensure-indexes.ts",
     "db:seed": "tsx scripts/seed.ts",
     "db:generate": "tsx scripts/generate-instances.ts",
-    "db:seed:demo": "tsx scripts/seed-demo.ts"
+    "db:seed:demo": "tsx scripts/seed-demo.ts",
+    "scheduler": "tsx scripts/scheduler.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",

@@ -99,6 +99,27 @@ function offsetMinutes(instant: Date): number {
   return (asUtc - truncated) / 60_000;
 }
 
+/**
+ * A local clock time on a given day, as the instant it actually happens.
+ *
+ * "Monday, 08:00" is not a fixed number of hours after Monday midnight UTC —
+ * it is eight o'clock in Karachi. The offset is read at that day rather than
+ * assumed, so this keeps working if Pakistan ever adopts daylight saving.
+ *
+ * Returns null for a time that is absent or malformed, so a commute with no
+ * arrival time simply produces no reminder instead of one at midnight.
+ */
+export function instantAt(day: Date, time: string | null | undefined): Date | null {
+  const minutes = time ? minutesFromTime(time) : null;
+  if (minutes === null) return null;
+
+  const midnight = startOfDay(day);
+  const naive = new Date(midnight.getTime() + minutes * 60_000);
+  // Re-read the offset at the target time: a day that crosses a transition
+  // has a different offset in the morning than at midnight.
+  return new Date(naive.getTime() - (offsetMinutes(naive) - offsetMinutes(midnight)) * 60_000);
+}
+
 /** The weekday in Karachi. */
 export function weekdayOf(instant: Date): Weekday {
   return partsIn(instant).weekday;

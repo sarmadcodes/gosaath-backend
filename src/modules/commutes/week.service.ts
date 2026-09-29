@@ -10,6 +10,7 @@ import {
 import { isoDate, startOfDay, upcomingDays } from "../../utils/dates.js";
 import { toPublicUser } from "../users/user.mapper.js";
 import { searchRides } from "../rides/ride.service.js";
+import { notifyQuietly } from "../notifications/notification.service.js";
 import type {
   CommuteDay,
   CommuteMember,
@@ -231,6 +232,43 @@ export async function skipDay(
 }
 
 /**
+ * Tells everyone booked on these rides that the driver has dropped out.
+ *
+ * Only the days and the driver's first name: a passenger needs to know which
+ * mornings to re-plan, not anything further about the driver.
+ */
+async function notifyPassengers(
+  instanceIds: unknown[],
+  driverId: string,
+  days: Weekday[],
+): Promise<void> {
+  const riders = await AttendanceModel.find({
+    rideInstanceId: { $in: instanceIds },
+    role: "passenger",
+  })
+    .select("userId")
+    .lean();
+
+  const uniqueRiders = [...new Set(riders.map((r) => r.userId.toString()))];
+  if (uniqueRiders.length === 0) return;
+
+  const driver = await UserModel.findById(driverId).select("name").lean();
+  const firstName = driver?.name.trim().split(/\s+/)[0] ?? "Your driver";
+  const when = days.join(", ");
+
+  await Promise.all(
+    uniqueRiders.map((riderId) =>
+      notifyQuietly({
+        userId: riderId,
+        kind: "driverUnavailable",
+        title: "Your driver cannot make it",
+        body: `${firstName} cannot drive on ${when}. Tap to look for cover.`,
+      }),
+    ),
+  );
+}
+
+/**
  * Marks days the owner cannot drive.
  *
  * Those instances become `noDriver`, which is what surfaces the "find cover"
@@ -278,6 +316,14 @@ export async function setUnavailable(
       },
       { $set: { status: "pending" } },
     );
+
+    // Telling them is the point. A passenger who is not told keeps planning
+    // around a ride that is no longer running, and finds out at the kerb.
+    //
+    // Outside any transaction and never awaited for delivery, so a
+    // notification failure cannot undo the driver's declaration — which has
+    // already happened whether or not the message gets through.
+    await notifyPassengers(affected.map((i) => i._id), userId, days);
   }
 
   logger.info(

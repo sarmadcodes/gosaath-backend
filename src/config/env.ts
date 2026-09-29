@@ -36,6 +36,15 @@ const schema = z
     /** Everything recurring is interpreted in this zone. Never the server's. */
     TZ: z.string().default("Asia/Karachi"),
 
+    /**
+     * How often the in-process recurring engine runs, in minutes. 0 turns it
+     * off — for a deployment that runs `npm run scheduler` from cron instead,
+     * or a second app process that should not duplicate the work of the first.
+     * Running it in two processes at once is safe either way; each pass claims
+     * its work atomically.
+     */
+    SCHEDULER_INTERVAL_MIN: z.coerce.number().int().min(0).max(1440).default(5),
+
     MONGODB_URI: z.string().min(1),
     MONGODB_DB: z.string().min(1).default("gosaath"),
     /** Pool ceiling. Sized to the deployment, not left to the driver default. */

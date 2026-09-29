@@ -5,6 +5,7 @@ import { connectToDatabase, disconnectFromDatabase } from "../../src/db/mongodb.
 import {
   AreaModel,
   AttendanceModel,
+  NotificationModel,
   CampusModel,
   CommuteModel,
   InstitutionModel,
@@ -436,6 +437,42 @@ describe("day-level exceptions", () => {
     const template = await CommuteModel.findById(id);
     expect(template!.status).toBe("active");
     expect(template!.schedule).toHaveLength(3);
+  });
+
+  it("tells the passengers when the driver drops out", async () => {
+    const id = await createFor(alice.access);
+    const upcoming = await RideInstanceModel.findOne({
+      commuteId: id,
+      date: { $gte: new Date() },
+    }).sort({ date: 1 });
+
+    // Bob is riding with Alice on that day.
+    await AttendanceModel.create({
+      rideInstanceId: upcoming!._id,
+      userId: bob.id,
+      role: "passenger",
+      status: "confirmed",
+    });
+    await NotificationModel.deleteMany({ userId: bob.id });
+
+    await api("POST", `/commutes/${id}/unavailable`, alice.access, {
+      days: [upcoming!.day],
+    });
+
+    // Being flagged noDriver is no use to somebody who is never told: they
+    // keep planning around the ride and find out at the kerb.
+    const told = await NotificationModel.find({ userId: bob.id }).lean();
+    expect(told).toHaveLength(1);
+    expect(told[0]!.kind).toBe("driverUnavailable");
+    expect(told[0]!.body).toContain(upcoming!.day);
+
+    // The driver does not notify themselves.
+    expect(
+      await NotificationModel.countDocuments({
+        userId: alice.id,
+        kind: "driverUnavailable",
+      }),
+    ).toBe(0);
   });
 
   it("a passenger cannot declare the driver unavailable", async () => {

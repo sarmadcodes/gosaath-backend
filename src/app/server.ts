@@ -2,6 +2,7 @@ import { buildApp } from "./app.js";
 import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
 import { connectToDatabase, disconnectFromDatabase } from "../db/mongodb.js";
+import { runScheduler } from "../modules/commutes/scheduler.service.js";
 
 /**
  * Process entry point: boot, then shut down cleanly.
@@ -30,6 +31,26 @@ async function main(): Promise<void> {
     );
   }
 
+  // The recurring engine. Rides have to appear, be confirmed and be reminded
+  // about whether or not anybody opens the app, so the default deployment
+  // does not depend on somebody remembering to set up cron. Set
+  // SCHEDULER_INTERVAL_MIN=0 where cron runs `npm run scheduler` instead.
+  let schedulerTimer: NodeJS.Timeout | undefined;
+  if (env.SCHEDULER_INTERVAL_MIN > 0) {
+    const tick = () => {
+      // Never awaited by anything that serves a request, and never allowed to
+      // throw into the process: a failed pass is logged and retried next tick.
+      void runScheduler().catch((error: unknown) => {
+        logger.error({ err: error }, "scheduler pass failed");
+      });
+    };
+    schedulerTimer = setInterval(tick, env.SCHEDULER_INTERVAL_MIN * 60_000);
+    // Does not hold the process open on its own during shutdown.
+    schedulerTimer.unref();
+    tick();
+    logger.info({ everyMinutes: env.SCHEDULER_INTERVAL_MIN }, "scheduler started");
+  }
+
   await app.listen({ port: env.PORT, host: env.HOST });
   logger.info(
     { port: env.PORT, host: env.HOST, env: env.NODE_ENV, tz: env.TZ },
@@ -47,6 +68,11 @@ async function main(): Promise<void> {
     }
     shuttingDown = true;
     logger.info({ signal }, "shutting down");
+
+    // Stop starting new passes. One already running finishes on its own, and
+    // is safe to lose halfway: every step claims its work atomically, so the
+    // next pass picks up whatever this one did not finish.
+    if (schedulerTimer) clearInterval(schedulerTimer);
 
     // Never hang forever waiting on a stuck connection. Exiting on our own
     // terms is better than being SIGKILLed mid-write.
