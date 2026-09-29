@@ -566,3 +566,61 @@ describe("overbooking under concurrency", () => {
     expect(seats).toBeLessThanOrEqual(2);
   }, 60_000);
 });
+
+describe("the number plate", () => {
+  /**
+   * SYSTEM.md 4.5.4. A list of rides must not double as a register of who
+   * drives what, but a passenger with a seat needs to identify the car.
+   */
+  it("is masked while browsing and shown in full once accepted", async () => {
+    const rideId = await offerRide(driver);
+    await giveCommute(rider);
+
+    const browsing = (await api("GET", "/rides", rider.access)).json().data;
+    const listing = browsing.find(
+      (r: { id: string }) => r.id === rideId,
+    ) as { vehiclePlate: string; plateVisibility: string };
+
+    expect(listing.plateVisibility).toBe("masked");
+    expect(listing.vehiclePlate).toMatch(/^[A-Z]{1,3}-•+$/);
+
+    // The real plate must not appear anywhere in the browsing response.
+    const vehicle = await VehicleModel.findOne({ ownerId: driver.id }).lean();
+    expect(JSON.stringify(browsing)).not.toContain(vehicle!.plate);
+
+    const created = await api("POST", `/rides/${rideId}/request`, rider.access, {
+      seats: 1,
+    });
+
+    // Pending is not confirmed.
+    const pending = (await api("GET", "/rides", rider.access)).json().data;
+    expect(
+      pending.find((r: { id: string }) => r.id === rideId)?.plateVisibility,
+    ).toBe("masked");
+
+    await api("POST", `/requests/${created.json().data.id}/respond`, driver.access, {
+      action: "accept",
+    });
+
+    const confirmed = (await api("GET", `/rides/${rideId}`, rider.access)).json().data;
+    expect(confirmed.plateVisibility).toBe("full");
+    expect(confirmed.vehiclePlate).toBe(vehicle!.plate);
+  });
+
+  it("stays masked for somebody with no seat on that ride", async () => {
+    const rideId = await offerRide(driver);
+    await giveCommute(rider);
+    await giveCommute(other);
+
+    const created = await api("POST", `/rides/${rideId}/request`, rider.access, {
+      seats: 1,
+    });
+    await api("POST", `/requests/${created.json().data.id}/respond`, driver.access, {
+      action: "accept",
+    });
+
+    // `other` had nothing to do with this ride, so nothing changes for them.
+    const seen = (await api("GET", `/rides/${rideId}`, other.access)).json().data;
+    expect(seen.plateVisibility).toBe("masked");
+  });
+});

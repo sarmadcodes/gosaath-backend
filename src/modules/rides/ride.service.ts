@@ -10,6 +10,7 @@ import {
   VehicleModel,
 } from "../../db/models/index.js";
 import { toPublicUser } from "../users/user.mapper.js";
+import { confirmedRideIds, maskPlate } from "../users/contact.service.js";
 import { nearbyRadiusKm } from "../location/location.service.js";
 import { distanceKm } from "../../utils/geo.js";
 import { minutesFromTime } from "../../utils/dates.js";
@@ -121,9 +122,16 @@ async function buildListings(
   const vehicles = await VehicleModel.find({
     _id: { $in: commutes.map((c) => c.vehicleId).filter(Boolean) },
   })
-    .select("type model")
+    .select("type model plate")
     .lean();
   const vehicleById = new Map(vehicles.map((v) => [v._id.toString(), v]));
+
+  // Plates are masked while browsing and shown in full on a ride the caller
+  // actually has a seat on. See maskPlate.
+  const confirmed = await confirmedRideIds(
+    context.userId,
+    instances.map((i) => i._id),
+  );
 
   const listings: RideListing[] = [];
 
@@ -149,6 +157,11 @@ async function buildListings(
       driver: toPublicUser(driver),
       vehicleType: vehicle.type as VehicleType,
       ...(vehicle.model ? { vehicleModel: vehicle.model } : {}),
+      ...(vehicle.plate
+        ? confirmed.has(instance._id.toString())
+          ? { vehiclePlate: vehicle.plate, plateVisibility: "full" as const }
+          : { vehiclePlate: maskPlate(vehicle.plate), plateVisibility: "masked" as const }
+        : {}),
       originArea: areaById.get(commute.originAreaId.toString())?.name ?? "",
       destinationCampus: campus?.name ?? "",
       // Their whole pattern, so the viewer can see which days line up rather

@@ -324,6 +324,16 @@ export type RideListing = {
   vehicleType: VehicleType;
   /** Model shown on the detail screen only, not on the card. */
   vehicleModel?: string;
+  /**
+   * The number plate, and how much of it you are being shown.
+   *
+   * Masked ("BKT-•••") for anyone browsing, so a listing cannot be used to
+   * collect the plates of every car at a campus. Shown in full once a seat
+   * request has been accepted, because identifying the right car at the kerb
+   * is the entire safety value of a plate — SYSTEM.md 4.5.4.
+   */
+  vehiclePlate?: string;
+  plateVisibility?: "masked" | "full";
 
   originArea: string;
   destinationCampus: string;
