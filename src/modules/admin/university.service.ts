@@ -481,7 +481,13 @@ export async function decideVerification(
 // ---------------------------------------------------------------------------
 
 async function campusMemberCount(campusId: Types.ObjectId) {
-  return UserModel.countDocuments({ campusId, emailVerifiedAt: { $ne: null } });
+  // Deleted accounts are not members. Counting them here would warn an admin
+  // that deactivating a campus affects people who already left.
+  return UserModel.countDocuments({
+    campusId,
+    emailVerifiedAt: { $ne: null },
+    deletedAt: null,
+  });
 }
 
 export async function listCampuses(ctx: Ctx, institutionId?: string) {
@@ -635,7 +641,12 @@ export async function updateInstitutionProfile(
 
   if (patch.emailDomains) {
     const domains = patch.emailDomains.map((d) => d.trim().toLowerCase().replace(/^@/, ""));
-    const accounts = await UserModel.find({ institutionId: institution._id })
+    // Live accounts only: a deleted account's address was rewritten when it
+    // closed, and warning about it would be warning about nobody.
+    const accounts = await UserModel.find({
+      institutionId: institution._id,
+      deletedAt: null,
+    })
       .select("email")
       .lean();
     const orphaned = accounts.filter((a) => !domains.includes(a.email.split("@")[1] ?? "")).length;
