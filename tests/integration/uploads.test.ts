@@ -9,6 +9,7 @@ import {
   SessionModel,
   UserModel,
 } from "../../src/db/models/index.js";
+import { readUrlFor } from "../../src/services/storage/index.js";
 
 /**
  * Uploads.
@@ -242,6 +243,37 @@ describe("the student card", () => {
     const key = await upload(alice, "badge");
     const response = await api("POST", "/me/badge", alice.access, { key });
     expect(response.json().data.badgeStatus).toBe("pending");
+  });
+});
+
+describe("serving files to another origin", () => {
+  /**
+   * Found in a browser, not in a test: helmet sets
+   * Cross-Origin-Resource-Policy: same-origin across the API, which is right
+   * for JSON and wrong for a file. The admin panel runs on its own origin, so
+   * without this the browser downloads the document, gets a 200, and then
+   * silently refuses to draw it. Reading the response tells you nothing.
+   */
+  it("lets a stored file be embedded by a page on another origin", async () => {
+    const key = await upload(alice, "badge");
+    const signed = await readUrlFor(key);
+
+    const file = await app.inject({
+      method: "GET",
+      url: (signed ?? "").replace(/^https?:\/\/[^/]+/, ""),
+    });
+
+    expect(file.statusCode).toBe(200);
+    expect(file.headers["cross-origin-resource-policy"]).toBe("cross-origin");
+  });
+
+  it("does the same for a member photo, which is fetched the same way", async () => {
+    const key = await upload(alice, "photo");
+    await api("PUT", "/me/photo", alice.access, { key });
+
+    const redirect = await api("GET", `/photos/${alice.id}`, bob.access);
+    expect(redirect.statusCode).toBe(302);
+    expect(redirect.headers["cross-origin-resource-policy"]).toBe("cross-origin");
   });
 });
 

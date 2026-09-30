@@ -23,6 +23,7 @@ import { emailService } from "../../services/email/index.js";
 import { notifyQuietly } from "../notifications/notification.service.js";
 import { logger } from "../../utils/logger.js";
 import { readUrlFor } from "../../services/storage/index.js";
+import { listAudit } from "../audit/audit.service.js";
 import type { FastifyRequest } from "fastify";
 
 /**
@@ -862,4 +863,48 @@ export async function* exportMembersCsv(ctx: Ctx, filters: Omit<MemberFilters, "
     if (batch.length >= 200) yield* flush();
   }
   if (batch.length > 0) yield* flush();
+}
+
+// ---------------------------------------------------------------------------
+// Activity
+// ---------------------------------------------------------------------------
+
+/**
+ * What has been done at this institution lately, and by whom.
+ *
+ * The audit log already records every admin action; this is the same data,
+ * scoped and read-only. It is deliberately not the platform audit log, which
+ * spans every institution and stays with the platform team: a university
+ * admin sees their own institution's history, including their own actions,
+ * and nothing from anybody else's.
+ *
+ * Actor names are resolved here rather than in the panel, because a log that
+ * says "6abb..." tells a person nothing about who suspended somebody.
+ */
+export async function recentActivity(ctx: Ctx, limit = 12) {
+  const scope = institutionFilter(ctx.admin, undefined);
+  // A platform admin asking without naming an institution would otherwise get
+  // an unscoped read of everything, which is what /admin/audit is for.
+  if (!scope.institutionId) return [];
+
+  const page = await listAudit({ institutionId: scope.institutionId.toString(), limit });
+
+  const actors = await UserModel.find({
+    _id: { $in: page.entries.map((entry) => entry.actorUserId) },
+  })
+    .select("name")
+    .lean();
+  const nameOf = new Map(actors.map((a) => [a._id.toString(), a.name]));
+
+  // Only what the panel renders. The full entry carries metadata that can
+  // include a reason somebody typed, which belongs in the audit log rather
+  // than on a dashboard anyone walking past a screen can read.
+  return page.entries.map((entry) => ({
+    id: entry.id,
+    action: entry.action,
+    actorName: nameOf.get(entry.actorUserId) ?? "A former admin",
+    targetType: entry.targetType,
+    targetId: entry.targetId,
+    at: entry.createdAt,
+  }));
 }

@@ -450,3 +450,46 @@ describe("reports", () => {
     expect((await ReportModel.findById(report._id))!.status).toBe("open");
   });
 });
+
+describe("activity", () => {
+  it("shows this institution's history, and nobody else's", async () => {
+    // An action in A, and one in B.
+    await call("POST", `/admin/members/${memberA.id}/suspend`, adminA.access, {
+      reason: "Testing the activity feed",
+    });
+
+    const response = await call("GET", "/admin/activity", adminA.access);
+    expect(response.statusCode).toBe(200);
+
+    const entries = response.json().data as Array<{
+      action: string;
+      actorName: string;
+      targetId: string;
+    }>;
+
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries[0]!.action).toBe("member.suspended");
+    // Resolved here, because "6abb..." tells a person nothing about who acted.
+    expect(entries[0]!.actorName).toBeTruthy();
+
+    // Nothing from institution B, whatever happened there.
+    const ids = entries.map((e) => e.targetId);
+    expect(ids).not.toContain(memberB.id);
+  });
+
+  it("never carries the reason somebody typed onto the dashboard", async () => {
+    await call("POST", `/admin/members/${memberA.id}/suspend`, adminA.access, {
+      reason: "A private note about this person",
+    });
+
+    const response = await call("GET", "/admin/activity", adminA.access);
+    // It is in the audit log, which is the right place for it. It is not on a
+    // dashboard anybody walking past the screen can read.
+    expect(response.body).not.toContain("A private note about this person");
+  });
+
+  it("is closed to members", async () => {
+    const response = await call("GET", "/admin/activity", memberA.access);
+    expect(response.statusCode).toBe(403);
+  });
+});

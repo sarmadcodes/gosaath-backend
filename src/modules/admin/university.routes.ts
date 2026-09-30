@@ -187,6 +187,10 @@ export async function universityAdminRoutes(app: FastifyInstance): Promise<void>
 
   // --- Reports --------------------------------------------------------------
 
+  app.get("/admin/activity", async (request) => {
+    return { data: await uni.recentActivity(ctx(request)) };
+  });
+
   app.get("/admin/reports", async (request) => {
     const filters = z
       .object({

@@ -77,7 +77,10 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
 
       // Not cached by anything shared: the URL behind it is per-request and
       // the photo is not public.
-      return reply.header("Cache-Control", "private, max-age=300").redirect(url, 302);
+      return reply
+        .header("Cache-Control", "private, max-age=300")
+        .header("Cross-Origin-Resource-Policy", "cross-origin")
+        .redirect(url, 302);
     });
   });
 
@@ -131,6 +134,15 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
     const file = await provider.read(key).catch(() => null);
     if (!file) throw new NotFoundError("That file was not found.");
 
-    return reply.type(file.contentType).send(file.body);
+    // Helmet sets Cross-Origin-Resource-Policy: same-origin across the API,
+    // which is right for JSON and wrong here: the admin panel runs on its own
+    // origin, and without this the browser refuses to render a document it
+    // has already downloaded, silently and with a 200 in the network tab.
+    // The signature in the URL is what protects the file, not the origin of
+    // the page asking for it.
+    return reply
+      .header("Cross-Origin-Resource-Policy", "cross-origin")
+      .type(file.contentType)
+      .send(file.body);
   });
 }

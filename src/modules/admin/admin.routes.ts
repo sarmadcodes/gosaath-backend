@@ -1,3 +1,4 @@
+import { InstitutionModel, UserModel } from "../../db/models/index.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
@@ -26,8 +27,30 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
    */
   app.get("/admin/me", { preHandler: requireAdmin }, async (request) => {
     const admin = requireAdminContext(request);
+
+    // Who the panel says you are, and which institution you are acting
+    // inside. Both are read here rather than held in the client, so a panel
+    // left open overnight cannot keep showing a scope that has since changed.
+    const user = await UserModel.findById(admin.userId)
+      .select("name email institutionId")
+      .lean();
+
+    const institution =
+      admin.scope.kind === "institution"
+        ? await InstitutionModel.findById(admin.scope.institutionId)
+            .select("name shortName")
+            .lean()
+        : null;
+
     return {
-      data: { userId: admin.userId, role: admin.role, scope: admin.scope },
+      data: {
+        userId: admin.userId,
+        role: admin.role,
+        scope: admin.scope,
+        name: user?.name ?? "Administrator",
+        email: user?.email ?? "",
+        institutionName: institution?.shortName ?? institution?.name ?? "GoSaath platform",
+      },
     };
   });
 
