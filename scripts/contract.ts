@@ -22,6 +22,7 @@ const FILES = [
   { from: "data/types.ts", to: "types.ts" },
   { from: "services/api.ts", to: "api.ts" },
   { from: "data/roles.ts", to: "roles.ts" },
+  { from: "data/events.ts", to: "events.ts" },
 ] as const;
 
 const HEADER = (source: string) =>

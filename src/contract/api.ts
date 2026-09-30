@@ -86,7 +86,14 @@ export interface InstitutionsApi {
 /** Where to send the bytes, and what to call the file afterwards. */
 export type UploadTarget = {
   url: string;
+  /** Absent means PUT. Some providers sign a multipart POST instead. */
+  method?: "PUT" | "POST";
   headers: Record<string, string>;
+  /**
+   * Form fields a multipart POST must carry alongside the file, unchanged:
+   * the signature covers exactly these.
+   */
+  fields?: Record<string, string>;
   key: string;
   expiresInSeconds: number;
 };
