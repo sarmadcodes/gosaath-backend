@@ -1,6 +1,10 @@
 import { Types } from "mongoose";
 import { logger } from "../../utils/logger.js";
-import { NotificationModel, PushTokenModel } from "../../db/models/index.js";
+import {
+  NotificationModel,
+  PushOutboxModel,
+  PushTokenModel,
+} from "../../db/models/index.js";
 import { ConsolePushProvider, ExpoPushProvider } from "../../services/push/expo.provider.js";
 import type { PushProvider } from "../../services/push/push.types.js";
 import { publish } from "../realtime/hub.js";
@@ -86,14 +90,25 @@ export async function notify(input: NotifyInput): Promise<AppNotification> {
     { type: "notification.created", unread: await unreadCount(input.userId) },
   );
 
-  // Fire and forget, on purpose.
+  // Queued, then attempted immediately.
   //
-  // NOT durable: a process restart between the write and the send loses the
-  // push, though never the notification itself. A real queue (BullMQ on Redis)
-  // slots in here behind the same call and is the upgrade when push delivery
-  // starts mattering more than the in-app list.
-  void dispatchPush(input).catch((error: unknown) => {
-    logger.warn({ err: error, kind: input.kind }, "push dispatch failed");
+  // The row is what makes delivery durable: a restart between here and the
+  // send, or a provider outage, leaves work the drain picks up rather than a
+  // push that silently never happened. The immediate attempt is what keeps it
+  // fast — a queue that only delivers on the next worker tick would turn a
+  // seat request into a notification that arrives a minute later.
+  const queued = await PushOutboxModel.create({
+    userId: input.userId,
+    kind: input.kind,
+    title: input.title,
+    body: input.body,
+    data: pushData(input),
+  });
+
+  void deliver(queued._id).catch((error: unknown) => {
+    // Already recorded against the row; this is only so it appears in the log
+    // beside the request that caused it.
+    logger.warn({ err: error, kind: input.kind }, "immediate push attempt failed");
   });
 
   return toNotification(created.toObject());
@@ -115,39 +130,148 @@ export async function notifyQuietly(input: NotifyInput): Promise<void> {
   }
 }
 
-async function dispatchPush(input: NotifyInput): Promise<void> {
+/** What travels to the device: ids and a destination, never anything private. */
+function pushData(input: NotifyInput): Record<string, string> {
+  return {
+    kind: input.kind,
+    ...(DESTINATIONS[input.kind] ? { href: DESTINATIONS[input.kind]! } : {}),
+    ...(input.payload ?? {}),
+  };
+}
+
+/**
+ * How long to wait before trying a failed push again.
+ *
+ * Exponential, and capped: a notification that has not been delivered in an
+ * hour is about a ride that has probably already happened, so there is no
+ * value in trying every minute until then.
+ */
+const RETRY_DELAYS_MS = [30_000, 2 * 60_000, 10 * 60_000, 30 * 60_000];
+
+/** Given up on after this many attempts, and left visible as failed. */
+const MAX_ATTEMPTS = 5;
+
+/**
+ * A row claimed but never finished — the process died mid-send. Released after
+ * this, so a crash costs a delay rather than a notification.
+ */
+const CLAIM_TIMEOUT_MS = 2 * 60_000;
+
+/**
+ * Attempts one queued push.
+ *
+ * Claimed with a guarded update whose filter is the state it is leaving, so
+ * two workers — or a worker and the immediate attempt — cannot both send the
+ * same row. Whoever loses the race simply does nothing.
+ */
+async function deliver(id: Types.ObjectId): Promise<void> {
+  const claimed = await PushOutboxModel.findOneAndUpdate(
+    {
+      _id: id,
+      status: { $in: ["pending", "sending"] },
+      $or: [
+        { claimedAt: null },
+        { claimedAt: { $lt: new Date(Date.now() - CLAIM_TIMEOUT_MS) } },
+      ],
+    },
+    { $set: { status: "sending", claimedAt: new Date() }, $inc: { attempts: 1 } },
+    { new: true },
+  );
+
+  if (!claimed) return;
+
   const tokens = await PushTokenModel.find({
-    userId: input.userId,
+    userId: claimed.userId,
     invalidAt: null,
   })
     .select("token")
     .lean();
 
-  if (tokens.length === 0) return;
-
-  const result = await pushProvider().send({
-    tokens: tokens.map((row) => row.token),
-    title: input.title,
-    body: input.body,
-    data: {
-      kind: input.kind,
-      ...(DESTINATIONS[input.kind] ? { href: DESTINATIONS[input.kind]! } : {}),
-      ...(input.payload ?? {}),
-    },
-  });
-
-  if (result.invalidTokens.length > 0) {
-    // Retired rather than deleted, so a token that comes back to life is
-    // visible rather than silently recreated.
-    await PushTokenModel.updateMany(
-      { token: { $in: result.invalidTokens } },
-      { $set: { invalidAt: new Date() } },
+  if (tokens.length === 0) {
+    // Nothing to deliver to. Not a failure to retry: the person has simply not
+    // opened the app on a device yet, and that will not change by trying
+    // again in thirty seconds. The in-app notification is already waiting.
+    await PushOutboxModel.updateOne(
+      { _id: claimed._id },
+      { $set: { status: "sent", sentAt: new Date(), claimedAt: null } },
     );
-    logger.info(
-      { retired: result.invalidTokens.length },
-      "push tokens retired",
-    );
+    return;
   }
+
+  try {
+    const result = await pushProvider().send({
+      tokens: tokens.map((row) => row.token),
+      title: claimed.title,
+      body: claimed.body,
+      data: (claimed.data as Record<string, string>) ?? { kind: claimed.kind },
+    });
+
+    if (result.invalidTokens.length > 0) {
+      // Retired rather than deleted, so a token that comes back to life is
+      // visible rather than silently recreated.
+      await PushTokenModel.updateMany(
+        { token: { $in: result.invalidTokens } },
+        { $set: { invalidAt: new Date() } },
+      );
+      logger.info({ retired: result.invalidTokens.length }, "push tokens retired");
+    }
+
+    await PushOutboxModel.updateOne(
+      { _id: claimed._id },
+      { $set: { status: "sent", sentAt: new Date(), claimedAt: null } },
+    );
+  } catch (error) {
+    const attempts = claimed.attempts;
+    const givenUp = attempts >= MAX_ATTEMPTS;
+
+    await PushOutboxModel.updateOne(
+      { _id: claimed._id },
+      {
+        $set: {
+          status: givenUp ? "failed" : "pending",
+          claimedAt: null,
+          nextAttemptAt: new Date(
+            Date.now() + (RETRY_DELAYS_MS[attempts - 1] ?? RETRY_DELAYS_MS.at(-1)!),
+          ),
+          lastError: String(error).slice(0, 300),
+        },
+      },
+    );
+
+    if (givenUp) {
+      // Loud, because this is the point at which somebody was not told
+      // something. The notification is still in their list.
+      logger.error(
+        { outboxId: claimed._id.toString(), kind: claimed.kind, attempts },
+        "push delivery given up on",
+      );
+    }
+  }
+}
+
+/**
+ * Sends everything that is due.
+ *
+ * Run from the scheduler tick. Bounded per pass so one backlog cannot occupy
+ * the process: whatever is left is still due on the next tick.
+ */
+export async function drainPushOutbox(limit = 100): Promise<{
+  attempted: number;
+}> {
+  const due = await PushOutboxModel.find({
+    status: { $in: ["pending", "sending"] },
+    nextAttemptAt: { $lte: new Date() },
+  })
+    .sort({ nextAttemptAt: 1 })
+    .limit(limit)
+    .select("_id")
+    .lean();
+
+  for (const row of due) {
+    await deliver(row._id as Types.ObjectId);
+  }
+
+  return { attempted: due.length };
 }
 
 /**

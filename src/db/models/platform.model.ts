@@ -64,6 +64,71 @@ export type PushTokenDoc = InferSchemaType<typeof pushTokenSchema>;
 export const PushTokenModel = model("PushToken", pushTokenSchema, "pushTokens");
 
 // ---------------------------------------------------------------------------
+// Push outbox
+// ---------------------------------------------------------------------------
+
+/**
+ * Pushes waiting to be delivered.
+ *
+ * The notification row is the durable record and is written first; this is the
+ * nudge about it. They are separate rows on purpose — a push is a message to a
+ * third party that can fail, be slow, or be refused, and none of that may
+ * touch the notification itself or the business operation that caused it.
+ *
+ * Before this existed, the push was dispatched and deliberately not awaited.
+ * That is correct for latency and wrong for durability: a restart between the
+ * notification write and the send lost the push silently, and a provider
+ * having a bad afternoon lost every push sent during it. A row here survives
+ * both, and the worker retries on a backoff until it succeeds or gives up
+ * loudly.
+ */
+const pushOutboxSchema = new Schema(
+  {
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    kind: { type: String, required: true, maxlength: 40 },
+    title: { type: String, required: true, maxlength: 200 },
+    body: { type: String, required: true, maxlength: 500 },
+    /** Ids only. This travels through a third party's servers. */
+    data: { type: Schema.Types.Mixed, default: null },
+
+    status: {
+      type: String,
+      enum: ["pending", "sending", "sent", "failed"],
+      default: "pending",
+    },
+    attempts: { type: Number, default: 0 },
+    /** When the worker may next pick this up. Backoff is written here. */
+    nextAttemptAt: { type: Date, default: Date.now },
+    sentAt: { type: Date, default: null },
+    /**
+     * Why it last failed. Bounded, and never the message body — a log line is
+     * not a place to reproduce what somebody was told.
+     */
+    lastError: { type: String, default: null, maxlength: 300 },
+    /**
+     * Claimed by a worker at this moment.
+     *
+     * A row stuck in "sending" because the process died mid-send is released
+     * once this is old enough, so a crash costs a delay rather than a push.
+     */
+    claimedAt: { type: Date, default: null },
+  },
+  baseOptions,
+);
+
+/** The worker's query: what is due, oldest first. */
+pushOutboxSchema.index({ status: 1, nextAttemptAt: 1 });
+/**
+ * Sent rows are kept briefly for diagnosis and then removed by Mongo itself,
+ * so the collection cannot grow without bound and nothing has to remember to
+ * prune it.
+ */
+pushOutboxSchema.index({ sentAt: 1 }, { expireAfterSeconds: 7 * 24 * 60 * 60 });
+
+export type PushOutboxDoc = InferSchemaType<typeof pushOutboxSchema>;
+export const PushOutboxModel = model("PushOutbox", pushOutboxSchema, "pushOutbox");
+
+// ---------------------------------------------------------------------------
 // Preferences
 // ---------------------------------------------------------------------------
 

@@ -5,7 +5,7 @@ import {
 } from "../../db/models/index.js";
 import { instantAt } from "../../utils/dates.js";
 import { logger } from "../../utils/logger.js";
-import { notifyQuietly } from "../notifications/notification.service.js";
+import { drainPushOutbox, notifyQuietly } from "../notifications/notification.service.js";
 import { generateAllInstances } from "./instance.service.js";
 
 /**
@@ -275,12 +275,19 @@ export async function runScheduler(now = new Date()): Promise<SchedulerResult> {
   const confirmed = await autoConfirmDueRides(now);
   const remindersSent = await sendDueReminders(now);
 
+  // Last, so anything this pass queued gets its first retry here rather than
+  // waiting a full tick. This is what makes push delivery survive a restart or
+  // a provider outage: the rows are already written, and this is what drains
+  // them.
+  const pushes = await drainPushOutbox();
+
   logger.info(
     {
       generated: generated.created,
       confirmed,
       orphansFlagged,
       reminders: remindersSent,
+      pushesAttempted: pushes.attempted,
     },
     "scheduler pass complete",
   );
