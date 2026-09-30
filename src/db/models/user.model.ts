@@ -113,5 +113,16 @@ userSchema.index({ institutionId: 1, createdAt: -1 });
 // The verification queue.
 userSchema.index({ institutionId: 1, badgeStatus: 1 });
 
+/**
+ * The admin directory's own query.
+ *
+ * It filters on verified-and-not-deleted and pages backwards through _id.
+ * Without this, listing members at a hundred thousand accounts is a
+ * collection scan per page — fine against a seeded database of three, and
+ * not fine in production.
+ */
+userSchema.index({ deletedAt: 1, emailVerifiedAt: 1, _id: -1 });
+userSchema.index({ badgeStatus: 1, badgeRequestedAt: 1 });
+
 export type UserDoc = InferSchemaType<typeof userSchema>;
 export const UserModel = model("User", userSchema, "users");

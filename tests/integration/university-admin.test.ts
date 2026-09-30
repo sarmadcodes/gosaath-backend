@@ -493,3 +493,51 @@ describe("activity", () => {
     expect(response.statusCode).toBe(403);
   });
 });
+
+describe("analytics", () => {
+  it("returns a bucket for every day in the window, including empty ones", async () => {
+    const response = await call("GET", "/admin/analytics?days=7", adminA.access);
+    expect(response.statusCode).toBe(200);
+
+    const data = response.json().data as {
+      days: number;
+      signups: Array<{ date: string; count: number }>;
+    };
+
+    // Empty days are days. A chart that skips them draws a flat line through
+    // a weekend nobody used and calls it steady.
+    expect(data.days).toBe(7);
+    expect(data.signups).toHaveLength(7);
+    expect(data.signups.every((point) => typeof point.count === "number")).toBe(true);
+  });
+
+  it("counts only this institution", async () => {
+    const response = await call("GET", "/admin/analytics", adminA.access);
+    const data = response.json().data as { totals: { members: number } };
+
+    const everyone = await UserModel.countDocuments({
+      deletedAt: null,
+      emailVerifiedAt: { $ne: null },
+    });
+
+    // B's members exist, and are not in A's numbers.
+    expect(data.totals.members).toBeLessThan(everyone);
+  });
+
+  it("refuses a window big enough to be a denial of service", async () => {
+    expect((await call("GET", "/admin/analytics?days=3650", adminA.access)).statusCode).toBe(400);
+  });
+
+  it("is closed to members", async () => {
+    expect((await call("GET", "/admin/analytics", memberA.access)).statusCode).toBe(403);
+  });
+
+  it("refuses an institution admin naming another institution", async () => {
+    const response = await call(
+      "GET",
+      `/admin/analytics?institutionId=${instB.toString()}`,
+      adminA.access,
+    );
+    expect(response.statusCode).toBe(403);
+  });
+});

@@ -187,6 +187,18 @@ export async function universityAdminRoutes(app: FastifyInstance): Promise<void>
 
   // --- Reports --------------------------------------------------------------
 
+  app.get("/admin/analytics", async (request) => {
+    const { days, institutionId } = z
+      .object({
+        // Bounded: an unbounded window is an unbounded aggregate.
+        days: z.coerce.number().int().min(7).max(90).default(30),
+        institutionId: objectId.optional(),
+      })
+      .strict()
+      .parse(request.query);
+    return { data: await uni.analytics(ctx(request), days, institutionId) };
+  });
+
   app.get("/admin/activity", async (request) => {
     return { data: await uni.recentActivity(ctx(request)) };
   });

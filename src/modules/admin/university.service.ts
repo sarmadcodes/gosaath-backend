@@ -23,6 +23,7 @@ import { emailService } from "../../services/email/index.js";
 import { notifyQuietly } from "../notifications/notification.service.js";
 import { logger } from "../../utils/logger.js";
 import { readUrlFor } from "../../services/storage/index.js";
+import { TIMEZONE } from "../../utils/dates.js";
 import { listAudit } from "../audit/audit.service.js";
 import type { FastifyRequest } from "fastify";
 
@@ -141,6 +142,7 @@ export type MemberRow = {
   email: string;
   userType: string;
   institutionId: string;
+  institutionName: string;
   campusName: string;
   areaName: string;
   badgeStatus: string;
@@ -186,11 +188,19 @@ function memberQuery(ctx: Ctx, filters: MemberFilters): Record<string, unknown> 
 
 async function toMemberRows(users: Array<Record<string, unknown>>): Promise<MemberRow[]> {
   const ids = users.map((u) => u["_id"] as Types.ObjectId);
-  const [campuses, areas, commutes] = await Promise.all([
+  const [campuses, areas, commutes, institutions] = await Promise.all([
     CampusModel.find({ _id: { $in: users.map((u) => u["campusId"]) } }).select("name").lean(),
     AreaModel.find({ _id: { $in: users.map((u) => u["areaId"]) } }).select("name").lean(),
     CommuteModel.find({ ownerId: { $in: ids }, status: "active" }).select("ownerId").lean(),
+    // Needed by the platform directory, where a row can come from any
+    // institution and "Clifton Campus" alone does not say whose campus.
+    InstitutionModel.find({ _id: { $in: users.map((u) => u["institutionId"]) } })
+      .select("name shortName")
+      .lean(),
   ]);
+  const institutionName = new Map(
+    institutions.map((i) => [i._id.toString(), i.shortName ?? i.name]),
+  );
   const campusName = new Map(campuses.map((c) => [c._id.toString(), c.name]));
   const areaName = new Map(areas.map((a) => [a._id.toString(), a.name]));
   const commuting = new Set(commutes.map((c) => c.ownerId.toString()));
@@ -201,6 +211,7 @@ async function toMemberRows(users: Array<Record<string, unknown>>): Promise<Memb
     email: String(u["email"]),
     userType: String(u["userType"]),
     institutionId: String(u["institutionId"]),
+    institutionName: institutionName.get(String(u["institutionId"])) ?? "",
     campusName: campusName.get(String(u["campusId"])) ?? "",
     areaName: areaName.get(String(u["areaId"])) ?? "",
     badgeStatus: String(u["badgeStatus"]),
@@ -907,4 +918,95 @@ export async function recentActivity(ctx: Ctx, limit = 12) {
     targetId: entry.targetId,
     at: entry.createdAt,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Analytics
+// ---------------------------------------------------------------------------
+
+/**
+ * Daily series over a window, for the questions an operator actually asks.
+ *
+ * Three series rather than a wall of charts, each answering something a
+ * decision depends on: are people still joining, are they setting up a
+ * commute once they have joined, and is the verification queue being cleared
+ * as fast as it fills.
+ *
+ * Scoped like everything else: an institution admin sees their own
+ * institution, a platform admin sees the platform or one institution they
+ * name. Every bucket is grouped in Asia/Karachi, because "Monday" has to
+ * mean the Monday the university had.
+ */
+export async function analytics(ctx: Ctx, days: number, institutionId?: string) {
+  const scoped = institutionFilter(ctx.admin, institutionId);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const dayBucket = (field: string) => ({
+    $dateToString: { format: "%Y-%m-%d", date: `$${field}`, timezone: TIMEZONE },
+  });
+
+  const [signups, commutes, verifications, totals] = await Promise.all([
+    UserModel.aggregate<{ _id: string; count: number }>([
+      { $match: { ...scoped, deletedAt: null, createdAt: { $gte: since } } },
+      { $group: { _id: dayBucket("createdAt"), count: { $sum: 1 } } },
+      { $sort: { _id: 1 } },
+    ]),
+    CommuteModel.aggregate<{ _id: string; count: number }>([
+      { $match: { ...scoped, createdAt: { $gte: since } } },
+      { $group: { _id: dayBucket("createdAt"), count: { $sum: 1 } } },
+      { $sort: { _id: 1 } },
+    ]),
+    // The verification funnel as it stands, not as it moved: badgeStatus is
+    // the current state of each account, which is what "how many are waiting"
+    // actually means.
+    UserModel.aggregate<{ _id: string; count: number }>([
+      { $match: { ...scoped, deletedAt: null, badgeStatus: { $ne: "none" } } },
+      { $group: { _id: "$badgeStatus", count: { $sum: 1 } } },
+    ]),
+    Promise.all([
+      UserModel.countDocuments({ ...scoped, deletedAt: null, emailVerifiedAt: { $ne: null } }),
+      CommuteModel.countDocuments({ ...scoped, status: "active" }),
+      CommuteModel.countDocuments({ ...scoped, status: "active", intent: { $in: ["offer", "both"] } }),
+    ]),
+  ]);
+
+  // Empty days are days, not gaps. A chart that skips them draws a flat line
+  // through a weekend nobody used and calls it steady.
+  const series = (rows: Array<{ _id: string; count: number }>) => {
+    const byDay = new Map(rows.map((row) => [row._id, row.count]));
+    const out: Array<{ date: string; count: number }> = [];
+    for (let index = days - 1; index >= 0; index -= 1) {
+      const date = new Date(Date.now() - index * 24 * 60 * 60 * 1000);
+      const key = new Intl.DateTimeFormat("en-CA", {
+        timeZone: TIMEZONE,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(date);
+      out.push({ date: key, count: byDay.get(key) ?? 0 });
+    }
+    return out;
+  };
+
+  const byStatus = new Map(verifications.map((row) => [row._id, row.count]));
+  const [members, activeCommutes, offering] = totals;
+
+  return {
+    days,
+    signups: series(signups),
+    commutes: series(commutes),
+    verification: {
+      pending: byStatus.get("pending") ?? 0,
+      approved: byStatus.get("approved") ?? 0,
+      rejected: byStatus.get("rejected") ?? 0,
+    },
+    totals: {
+      members,
+      activeCommutes,
+      offeringSeats: offering,
+      // The ratio that decides whether the product works at an institution:
+      // riders without drivers is a waiting list, not a carpool.
+      lookingForRides: activeCommutes - offering,
+    },
+  };
 }

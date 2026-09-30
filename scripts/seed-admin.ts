@@ -24,6 +24,8 @@ if (env.isProduction) {
 
 const EMAIL = "admin.demo@szabist.pk";
 const PASSWORD = "GoSaathAdmin2026";
+const SUPER_EMAIL = "admin@gosaath.com";
+const SUPER_PASSWORD = "GoSaathSuper2026";
 
 await connectToDatabase();
 
@@ -52,6 +54,33 @@ await UserModel.create({
   role: "universityAdmin",
   emailVerifiedAt: new Date(),
 });
+
+await UserModel.deleteOne({ email: SUPER_EMAIL });
+
+// The platform administrator. Scoped to nothing in particular, which is what
+// platform scope means: every institution, including ones added later.
+await UserModel.create({
+  name: "Hamza Siddiqui",
+  email: SUPER_EMAIL,
+  passwordHash: await hashPassword(SUPER_PASSWORD),
+  phone: "0300 1010101",
+  userType: "employee",
+  institutionId: institution._id,
+  campusId: campus._id,
+  areaId: area._id,
+  badgeStatus: "approved",
+  role: "superAdmin",
+  emailVerifiedAt: new Date(),
+});
+
+console.log(`
+  Platform admin ready
+
+  ${SUPER_EMAIL}
+  ${SUPER_PASSWORD}
+
+  Scope: the whole GoSaath platform.
+`);
 
 console.log(`
   University admin ready (${env.MONGODB_DB})
