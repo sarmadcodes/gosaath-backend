@@ -20,6 +20,7 @@ import { commuteRoutes } from "../modules/commutes/commute.routes.js";
 import { matchRoutes } from "../modules/matching/match.routes.js";
 import { notificationRoutes } from "../modules/notifications/notification.routes.js";
 import { safetyRoutes } from "../modules/safety/safety.routes.js";
+import { realtimeRoutes } from "../modules/realtime/realtime.routes.js";
 import { adminRoutes } from "../modules/admin/admin.routes.js";
 import { universityAdminRoutes } from "../modules/admin/university.routes.js";
 import { superAdminRoutes } from "../modules/admin/super.routes.js";
@@ -128,6 +129,7 @@ export async function buildApp(
       await api.register(matchRoutes);
       await api.register(notificationRoutes);
       await api.register(safetyRoutes);
+      await api.register(realtimeRoutes);
       await api.register(adminRoutes);
       await api.register(universityAdminRoutes);
       await api.register(superAdminRoutes);

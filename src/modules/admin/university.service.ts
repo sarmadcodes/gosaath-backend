@@ -18,6 +18,12 @@ import {
 } from "../../db/models/index.js";
 import { assertInScope, scopeFilter, type AdminContext } from "../../middleware/admin.js";
 import { recordAudit } from "../audit/audit.service.js";
+import {
+  announceAccountStanding,
+  announceMemberChanged,
+  announceReportUpdated,
+  announceVerificationDecided,
+} from "../realtime/announce.js";
 import { revokeAllSessions } from "../auth/token.service.js";
 import { emailService } from "../../services/email/index.js";
 import { notifyQuietly } from "../notifications/notification.service.js";
@@ -314,6 +320,12 @@ export async function suspendMember(ctx: Ctx, memberId: string, reason: string) 
     ...(ctx.request ? { request: ctx.request } : {}),
   });
 
+  // Every admin working this institution sees the row change, and the member's
+  // own app learns its session is gone rather than discovering it on the next
+  // tap.
+  announceMemberChanged(user.institutionId.toString(), user._id.toString());
+  announceAccountStanding(user._id.toString(), "suspended");
+
   return getMember(ctx, memberId);
 }
 
@@ -484,6 +496,15 @@ export async function decideVerification(
       ...(reasonText ? { reason: reasonText } : {}),
     })
     .catch((error: unknown) => logger.warn({ err: error }, "badge email failed"));
+
+  // The queue loses a row for every other admin looking at it, and the member
+  // sees their status change without reopening the screen.
+  await announceVerificationDecided({
+    institutionId: user.institutionId.toString(),
+    userId: user._id.toString(),
+    status: decision.approve ? "approved" : "rejected",
+  });
+  announceMemberChanged(user.institutionId.toString(), user._id.toString());
 
   return { id: user._id.toString(), badgeStatus: updated.badgeStatus };
 }
@@ -822,6 +843,8 @@ export async function actOnReport(
     metadata: { action, note: note ?? null },
     ...(ctx.request ? { request: ctx.request } : {}),
   });
+
+  await announceReportUpdated(report.institutionId.toString());
 
   return { id: updated._id.toString(), status: updated.status };
 }

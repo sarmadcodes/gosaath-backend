@@ -18,6 +18,7 @@ import {
 } from "../../db/models/index.js";
 import { toPublicUser } from "../users/user.mapper.js";
 import { notifyQuietly } from "../notifications/notification.service.js";
+import { publishAll } from "../realtime/hub.js";
 import type {
   CommuteDirection,
   DaySchedule,
@@ -166,6 +167,21 @@ export async function requestSeat(
       payload: { requestId: created._id.toString() },
     });
 
+    // The driver's Requests screen, if it is open, gains a row without being
+    // touched. Published to both sides: the asker's own other devices need to
+    // stop offering a button they have already used.
+    publishAll(
+      [
+        { kind: "user", userId: instance.driverId.toString() },
+        { kind: "user", userId: String(requesterId) },
+      ],
+      {
+        type: "seatRequest.created",
+        requestId: created._id.toString(),
+        rideId: instance._id.toString(),
+      },
+    );
+
     const [mapped] = await toSeatRequests([created.toObject() as RequestRow], "sent");
     if (!mapped) throw new NotFoundError("That ride was not found.");
     return mapped;
@@ -225,6 +241,19 @@ export async function respondToRequest(
       body: "That ride is not available for you. There may be others.",
       payload: { requestId: request._id.toString() },
     });
+
+    publishAll(
+      [
+        { kind: "user", userId: request.requesterId.toString() },
+        { kind: "user", userId: driverId },
+      ],
+      {
+        type: "seatRequest.declined",
+        requestId: request._id.toString(),
+        rideId: request.rideInstanceId.toString(),
+      },
+    );
+
     const [mapped] = await toSeatRequests([declined as RequestRow], "incoming");
     return mapped!;
   }
@@ -327,6 +356,22 @@ async function acceptRequest(
       body: `${firstNameOf(driver?.name)} accepted your request. You can contact them now.`,
       payload: { requestId: request._id.toString() },
     });
+
+    // Both sides, and the ride itself. The passenger's screen moves to
+    // accepted and reveals the contact details it is now allowed to show; the
+    // driver's list loses the pending row; anybody looking at this ride sees
+    // the seat count drop.
+    publishAll(
+      [
+        { kind: "user", userId: request.requesterId.toString() },
+        { kind: "user", userId: driverId },
+      ],
+      {
+        type: "seatRequest.accepted",
+        requestId: request._id.toString(),
+        rideId: request.rideInstanceId.toString(),
+      },
+    );
 
     const [mapped] = await toSeatRequests([accepted!], "incoming");
     return mapped!;

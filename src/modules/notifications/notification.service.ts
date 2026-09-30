@@ -3,6 +3,7 @@ import { logger } from "../../utils/logger.js";
 import { NotificationModel, PushTokenModel } from "../../db/models/index.js";
 import { ConsolePushProvider, ExpoPushProvider } from "../../services/push/expo.provider.js";
 import type { PushProvider } from "../../services/push/push.types.js";
+import { publish } from "../realtime/hub.js";
 import type { AppNotification, NotificationKind } from "../../contract/types.js";
 
 /**
@@ -74,6 +75,16 @@ export async function notify(input: NotifyInput): Promise<AppNotification> {
     unread: true,
     payload: input.payload ?? null,
   });
+
+  // The live nudge, to any screen this person currently has open. Sent before
+  // the push, and separately from it: a device with the app in the foreground
+  // should update immediately rather than wait for a round trip through Expo,
+  // and in practice often never gets a push at all because iOS suppresses it
+  // while the app is frontmost.
+  publish(
+    { kind: "user", userId: String(input.userId) },
+    { type: "notification.created", unread: await unreadCount(input.userId) },
+  );
 
   // Fire and forget, on purpose.
   //
@@ -210,6 +221,43 @@ export async function markRead(userId: string, id: string): Promise<void> {
     { _id: id, userId },
     { $set: { unread: false } },
   );
+
+  // So a second device showing a badge of 3 drops to 2 without being touched.
+  publish(
+    { kind: "user", userId },
+    { type: "notification.read", unread: await unreadCount(userId) },
+  );
+}
+
+/**
+ * Marks everything read at once.
+ *
+ * Scoped to unread rows rather than all of them, so the write touches only
+ * what changes — and so the returned count is the number actually cleared.
+ */
+export async function markAllRead(userId: string): Promise<number> {
+  const result = await NotificationModel.updateMany(
+    { userId, unread: true },
+    { $set: { unread: false } },
+  );
+
+  publish({ kind: "user", userId }, { type: "notification.read", unread: 0 });
+
+  return result.modifiedCount;
+}
+
+/**
+ * How many are unread.
+ *
+ * Counted rather than stored on the user, because a denormalised counter is a
+ * counter that drifts: every path that creates, reads or deletes a
+ * notification would have to maintain it, and the one that forgets leaves a
+ * badge showing 1 forever. Supported by the `{ userId, unread }` index.
+ */
+export async function unreadCount(
+  userId: Types.ObjectId | string,
+): Promise<number> {
+  return NotificationModel.countDocuments({ userId, unread: true });
 }
 
 /**

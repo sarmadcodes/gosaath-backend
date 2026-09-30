@@ -3,6 +3,7 @@ import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
 import { connectToDatabase, disconnectFromDatabase } from "../db/mongodb.js";
 import { runScheduler } from "../modules/commutes/scheduler.service.js";
+import { closeAll } from "../modules/realtime/hub.js";
 
 /**
  * Process entry point: boot, then shut down cleanly.
@@ -83,6 +84,12 @@ async function main(): Promise<void> {
     guard.unref();
 
     try {
+      // Hang up the event streams first. They are in-flight requests that
+      // never complete on their own, so `app.close()` would wait for them
+      // until the guard above fired. Clients treat the close as an ordinary
+      // disconnect and reconnect with Last-Event-ID.
+      closeAll();
+
       // Order matters: stop taking new work and let in-flight requests
       // finish, then close what they depend on. Closing Mongo first would
       // fail the very requests we are waiting for.

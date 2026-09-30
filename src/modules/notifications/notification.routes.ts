@@ -41,6 +41,21 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(204).send();
   });
 
+  /**
+   * The unread badge, on its own.
+   *
+   * Separate from the list because the tab bar needs the number on every
+   * screen, and fetching a hundred notifications to count them is a hundred
+   * notifications the client throws away.
+   */
+  app.get("/notifications/unread", async (request) => ({
+    data: { unread: await notifications.unreadCount(requireUser(request).id) },
+  }));
+
+  app.post("/notifications/read-all", async (request) => ({
+    data: { cleared: await notifications.markAllRead(requireUser(request).id) },
+  }));
+
   app.post("/notifications/token", async (request, reply) => {
     const { token, platform } = z
       .object({ token: pushToken, platform: z.enum(["ios", "android"]) })
