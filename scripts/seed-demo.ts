@@ -40,6 +40,24 @@ if (env.isProduction) {
 export const DEMO_PASSWORD = "GoSaathDemo2026";
 
 const DEMO = {
+  /**
+   * The account used for the project presentation.
+   *
+   * Same institution, campus and area as the others, and a timetable that
+   * matches Bilal on Monday and Wednesday, so every screen has real content
+   * on it: matches, a ride to request, and a driver to contact.
+   */
+  presenter: {
+    name: "Sarmad Abbasi",
+    email: "sarmad.abbasi@szabist.pk",
+    phone: "0300 2580254",
+    schedule: [
+      { day: "Mon", arriveBy: "08:00", leaveCampusAt: "17:00" },
+      { day: "Tue", arriveBy: "09:00", leaveCampusAt: "15:00" },
+      { day: "Wed", arriveBy: "08:10", leaveCampusAt: "17:00" },
+      { day: "Fri", arriveBy: "11:00", leaveCampusAt: "16:00" },
+    ],
+  },
   finder: {
     name: "Ayesha Khan",
     email: "ayesha.demo@szabist.pk",
@@ -81,7 +99,7 @@ const passwordHash = await hashPassword(DEMO_PASSWORD);
 // --- Reset anything left from a previous run ------------------------------
 
 const existing = await UserModel.find({
-  email: { $in: [DEMO.finder.email, DEMO.offerer.email] },
+  email: { $in: [DEMO.presenter.email, DEMO.finder.email, DEMO.offerer.email] },
 })
   .select("_id")
   .lean();
@@ -125,6 +143,7 @@ async function createAccount(person: { name: string; email: string; phone: strin
   });
 }
 
+const sarmad = await createAccount(DEMO.presenter);
 const ayesha = await createAccount(DEMO.finder);
 const bilal = await createAccount(DEMO.offerer);
 
@@ -134,6 +153,18 @@ const car = await VehicleModel.create({
   model: "Toyota Corolla GLi",
   plate: "BKT-512",
   colour: "White",
+});
+
+await CommuteModel.create({
+  ownerId: sarmad._id,
+  intent: "find",
+  institutionId: institution._id,
+  campusId: campus._id,
+  originAreaId: area._id,
+  schedule: DEMO.presenter.schedule,
+  direction: "both",
+  womenOnly: false,
+  status: "active",
 });
 
 await CommuteModel.create({
@@ -171,6 +202,7 @@ console.log(`
 
   Password for both:  ${DEMO_PASSWORD}
 
+  Sarmad Abbasi ${DEMO.presenter.email}   looking for a ride
   Ayesha Khan  ${DEMO.finder.email}   looking for a ride
   Bilal Ahmed  ${DEMO.offerer.email}    offering 3 seats · Rs 300 · Toyota Corolla
 
