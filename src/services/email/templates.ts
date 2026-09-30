@@ -263,3 +263,50 @@ export function badgeDecisionEmail(input: {
     ].join("\n"),
   };
 }
+
+/**
+ * The code that signs an administrator in.
+ *
+ * Worded to be actionable when it was not asked for. An admin console is worth
+ * more to an attacker than any single account, so the one thing this email has
+ * to do, beyond carrying the code, is make an unexpected arrival obvious and
+ * tell the person what it means: somebody has their address and is trying to
+ * get in, and the code is the only thing stopping them.
+ */
+export function adminSignInEmail(input: {
+  name: string;
+  code: string;
+  expiresInMinutes: number;
+}): Omit<EmailMessage, "to"> {
+  const who = firstName(input.name);
+  return {
+    subject: "Your GoSaath admin sign-in code",
+    tag: "admin-signin",
+    html: layout(
+      [
+        '    <div style="font-size:16px;line-height:1.6;">',
+        `      <p style="margin:0 0 16px;">Hi ${who},</p>`,
+        '      <p style="margin:0 0 8px;">Use this code to sign in to the GoSaath admin panel.</p>',
+        "    </div>",
+        codeBlock(input.code),
+        '    <div style="font-size:14px;line-height:1.6;color:#4b5563;">',
+        `      <p style="margin:0 0 8px;">The code expires in ${input.expiresInMinutes} minutes and can be used once.</p>`,
+        '      <p style="margin:0;"><strong>If you did not try to sign in</strong>, somebody else has your email address and is trying to reach the admin panel. Do not share this code with anyone, and tell the GoSaath team.</p>',
+        "    </div>",
+      ].join("\n"),
+    ),
+    text: [
+      `Hi ${who},`,
+      "",
+      "Use this code to sign in to the GoSaath admin panel:",
+      "",
+      `    ${input.code}`,
+      "",
+      `The code expires in ${input.expiresInMinutes} minutes and can be used once.`,
+      "",
+      "If you did not try to sign in, somebody else has your email address and",
+      "is trying to reach the admin panel. Do not share this code with anyone,",
+      "and tell the GoSaath team.",
+    ].join("\n"),
+  };
+}

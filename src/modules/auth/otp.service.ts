@@ -14,7 +14,7 @@ import { OtpChallengeModel } from "../../db/models/index.js";
  * them.
  */
 
-export type OtpPurpose = "verifyEmail" | "passwordReset";
+export type OtpPurpose = "verifyEmail" | "passwordReset" | "adminSignIn";
 
 /**
  * Creates or refreshes a challenge and returns the plain code.

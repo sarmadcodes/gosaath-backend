@@ -18,6 +18,8 @@ export type AuditAction =
   | "institution.activated"
   | "institution.deactivated"
   | "institution.updated"
+  | "admin.signInRequested"
+  | "admin.signedIn"
   | "admin.invited"
   | "admin.removed"
   | "member.suspended"

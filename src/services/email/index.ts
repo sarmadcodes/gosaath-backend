@@ -8,6 +8,7 @@ import {
   existingAccountEmail,
   passwordResetEmail,
   verificationCodeEmail,
+  adminSignInEmail,
 } from "./templates.js";
 import type { EmailProvider, EmailResult, EmailService } from "./email.types.js";
 
@@ -45,6 +46,15 @@ class TemplatedEmailService implements EmailService {
       to: input.to,
       ...passwordResetEmail(input),
     });
+  }
+
+  async sendAdminSignInCode(input: {
+    to: string;
+    name: string;
+    code: string;
+    expiresInMinutes: number;
+  }): Promise<EmailResult> {
+    return this.provider.send({ to: input.to, ...adminSignInEmail(input) });
   }
 
   async sendExistingAccountNotice(input: {
@@ -106,4 +116,16 @@ export function emailService(): EmailService {
 /** Lets a test substitute a provider without touching the environment. */
 export function createEmailService(provider: EmailProvider): EmailService {
   return new TemplatedEmailService(provider);
+}
+
+/**
+ * Replaces the process-wide provider, for tests that need to read what was
+ * sent — a one-time code exists only in the email, so a test of the sign-in
+ * flow has no other way to learn it.
+ *
+ * The same seam as `setPushProvider` and `setStorageProvider`. Pass null to
+ * restore the configured provider.
+ */
+export function setEmailProvider(provider: EmailProvider | null): void {
+  instance = provider ? new TemplatedEmailService(provider) : null;
 }

@@ -59,6 +59,14 @@ export interface EmailService {
    * that silence from being unhelpful — and it reaches the real owner of the
    * address rather than whoever typed it in.
    */
+  /** The one-time code that signs an administrator in. */
+  sendAdminSignInCode(input: {
+    to: string;
+    name: string;
+    code: string;
+    expiresInMinutes: number;
+  }): Promise<EmailResult>;
+
   sendExistingAccountNotice(input: {
     to: string;
     name: string;

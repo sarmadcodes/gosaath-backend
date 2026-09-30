@@ -13,7 +13,7 @@ const otpChallengeSchema = new Schema(
     email: { type: String, required: true, lowercase: true, trim: true },
     purpose: {
       type: String,
-      enum: ["verifyEmail", "passwordReset"],
+      enum: ["verifyEmail", "passwordReset", "adminSignIn"],
       required: true,
     },
 
