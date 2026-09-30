@@ -54,6 +54,19 @@ const schema = z
      */
     UPLOADS_PROVIDER: z.enum(["s3", "local"]).default("local"),
     UPLOADS_DIR: z.string().default("var/uploads"),
+
+    /**
+     * Where profile photos live, which is a separate decision from where
+     * documents live.
+     *
+     * Photos are shown in lists and want a CDN and a resized variant;
+     * documents want neither. "cloudinary" applies only to photos — a
+     * student card is never sent there, whatever this is set to.
+     */
+    MEDIA_PROVIDER: z.enum(["cloudinary", "s3", "local"]).default("local"),
+    CLOUDINARY_CLOUD_NAME: z.string().optional(),
+    CLOUDINARY_API_KEY: optionalSecret(1),
+    CLOUDINARY_API_SECRET: optionalSecret(1),
     /** This server's own address, for signing local upload URLs. */
     PUBLIC_URL: z.string().url().default("http://localhost:4000"),
 
@@ -133,6 +146,22 @@ const schema = z
       }
     }
 
+    if (value.MEDIA_PROVIDER === "cloudinary") {
+      for (const key of [
+        "CLOUDINARY_CLOUD_NAME",
+        "CLOUDINARY_API_KEY",
+        "CLOUDINARY_API_SECRET",
+      ] as const) {
+        if (!value[key]) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} is required when MEDIA_PROVIDER is cloudinary`,
+          });
+        }
+      }
+    }
+
     if (value.EMAIL_PROVIDER === "resend" && !value.RESEND_API_KEY) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -150,6 +179,16 @@ const schema = z
           message: "JWT_SECRET is required outside development",
         });
       }
+      if (value.MEDIA_PROVIDER === "local") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["MEDIA_PROVIDER"],
+          message:
+            "MEDIA_PROVIDER must be cloudinary or s3 outside development — " +
+            "local disk loses every profile photo on the next deploy",
+        });
+      }
+
       if (value.UPLOADS_PROVIDER === "local") {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,

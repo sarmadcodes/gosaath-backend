@@ -17,6 +17,21 @@ export default defineConfig({
        */
       MONGODB_DB: "gosaath_test",
       LOG_LEVEL: "silent",
+      /**
+       * Storage is local for every test, whatever .env says.
+       *
+       * The suite reads the developer's .env, so switching MEDIA_PROVIDER to
+       * cloudinary there made six upload tests fail: they sign an upload and
+       * then PUT the bytes back through `app.inject`, which cannot reach a
+       * third party — nor should a test try to. Pinned here so the suite tests
+       * the code rather than whatever this machine happens to be configured
+       * for, and so it still passes with no credentials at all.
+       *
+       * The Cloudinary provider is covered directly in tests/unit, with
+       * injected configuration and no network.
+       */
+      MEDIA_PROVIDER: "local",
+      UPLOADS_PROVIDER: "local",
     },
     // Database tests share one database, so parallel files would race on the
     // same collections. Cheap to serialise at this size.

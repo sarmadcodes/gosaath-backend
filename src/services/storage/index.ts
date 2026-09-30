@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { env } from "../../config/env.js";
 import { logger } from "../../utils/logger.js";
 import { UnprocessableError } from "../../utils/errors.js";
+import { CloudinaryStorageProvider } from "./cloudinary.provider.js";
 import { LocalStorageProvider } from "./local.provider.js";
 import { S3StorageProvider } from "./s3.provider.js";
 import type { FileKind, StorageProvider, UploadTarget } from "./storage.types.js";
@@ -43,21 +44,77 @@ const RULES: Record<FileKind, { maxBytes: number; types: string[] }> = {
 /** How long a read URL lives. Long enough to render a list, short enough to expire. */
 const DOWNLOAD_TTL_SECONDS = 15 * 60;
 
-let instance: StorageProvider | undefined;
+/**
+ * Two providers, chosen by what the file is — not by one global setting.
+ *
+ * A photo wants a CDN and a resized variant. A student card wants the
+ * opposite: no CDN, no cache, no URL that outlives the request that asked for
+ * it. Trying to serve both from one bucket means one of them gets the wrong
+ * treatment, so `photo` follows MEDIA_PROVIDER and `badge` follows
+ * UPLOADS_PROVIDER, and nothing outside this file has to know which is which.
+ */
+const instances = new Map<FileKind, StorageProvider>();
 
-export function storageProvider(): StorageProvider {
+/** Substituted wholesale by tests, which then need no credentials at all. */
+let override: StorageProvider | undefined;
+
+/**
+ * Which provider holds a given kind of file.
+ *
+ * Pure, and exported, so the one rule that matters can be asserted directly:
+ * **a verification document is never routed to Cloudinary**, whatever
+ * MEDIA_PROVIDER says. That is a privacy guarantee rather than a
+ * configuration default, and a guarantee deserves a test that does not
+ * depend on the environment to express it.
+ */
+export function chooseProvider(
+  kind: FileKind,
+  media: typeof env.MEDIA_PROVIDER,
+  uploads: typeof env.UPLOADS_PROVIDER,
+): "cloudinary" | "s3" | "local" {
+  if (kind === "badge") return uploads;
+  return media;
+}
+
+function build(kind: FileKind): StorageProvider {
+  switch (chooseProvider(kind, env.MEDIA_PROVIDER, env.UPLOADS_PROVIDER)) {
+    case "cloudinary":
+      return new CloudinaryStorageProvider();
+    case "s3":
+      return new S3StorageProvider();
+    case "local":
+      return new LocalStorageProvider();
+  }
+}
+
+export function storageProvider(kind: FileKind = "badge"): StorageProvider {
+  if (override) return override;
+
+  let instance = instances.get(kind);
   if (!instance) {
-    instance = env.UPLOADS_PROVIDER === "s3"
-      ? new S3StorageProvider()
-      : new LocalStorageProvider();
-    logger.info({ provider: instance.name }, "storage ready");
+    instance = build(kind);
+    instances.set(kind, instance);
+    logger.info({ provider: instance.name, kind }, "storage ready");
   }
   return instance;
 }
 
 /** Lets a test substitute a provider without touching the environment. */
 export function setStorageProvider(next: StorageProvider | null): void {
-  instance = next ?? undefined;
+  override = next ?? undefined;
+  if (!next) instances.clear();
+}
+
+/**
+ * Which kind of file a key holds, read from the key itself.
+ *
+ * `keyFor` puts the kind in the first segment precisely so that a key alone
+ * is enough to find the provider that stored it. Callers holding only a key —
+ * rendering a photo, cleaning up a replaced file — would otherwise have to
+ * pass a kind they do not always know.
+ */
+function kindOfKey(key: string): FileKind {
+  return key.startsWith("photos/") ? "photo" : "badge";
 }
 
 const EXTENSIONS: Record<string, string> = {
@@ -118,7 +175,7 @@ export async function signUpload(input: {
     throw new UnprocessableError(`That file is too large. The limit is ${mb} MB.`);
   }
 
-  return storageProvider().signUpload({
+  return storageProvider(input.kind).signUpload({
     key: keyFor(input.kind, input.userId, input.contentType),
     contentType: input.contentType,
     maxBytes: input.bytes,
@@ -133,14 +190,14 @@ export async function signUpload(input: {
  * explain, and for a badge, an admin reviewing nothing.
  */
 export async function confirmUploaded(key: string, kind: FileKind): Promise<void> {
-  const found = await storageProvider().head(key);
+  const found = await storageProvider(kind).head(key);
   if (!found.exists) {
     throw new UnprocessableError("That upload did not finish. Try again.");
   }
   if (found.size > RULES[kind].maxBytes) {
     // The provider should have refused it; if one ever does not, it does not
     // get to be recorded.
-    await storageProvider().remove(key);
+    await storageProvider(kind).remove(key);
     throw new UnprocessableError("That file is too large.");
   }
 }
@@ -151,12 +208,12 @@ export async function readUrlFor(key: string | null | undefined): Promise<string
   // Already a URL: photos uploaded before object storage existed, and the
   // seeded demo accounts. Passed through rather than signed.
   if (key.startsWith("http://") || key.startsWith("https://")) return key;
-  return storageProvider().signDownload(key, DOWNLOAD_TTL_SECONDS);
+  return storageProvider(kindOfKey(key)).signDownload(key, DOWNLOAD_TTL_SECONDS);
 }
 
 export async function removeFile(key: string | null | undefined): Promise<void> {
   if (!key || key.startsWith("http")) return;
-  await storageProvider()
+  await storageProvider(kindOfKey(key))
     .remove(key)
     .catch((error: unknown) => {
       // A file we failed to delete is rubbish in a bucket, not a failed

@@ -16,13 +16,26 @@ export type FileKind = "photo" | "badge";
 
 export type UploadTarget = {
   /**
-   * Where the client PUTs the bytes. Short-lived and single-purpose: it
+   * Where the client sends the bytes. Short-lived and single-purpose: it
    * carries the content type and size it was signed for, so it cannot be
    * reused to upload something else.
    */
   url: string;
-  /** Header the client must send, matching what was signed. */
+  /**
+   * How to send them. Absent means PUT, which is what a presigned S3 URL
+   * expects; Cloudinary needs a multipart POST carrying signed fields.
+   */
+  method?: "PUT" | "POST";
+  /** Headers the client must send, matching what was signed. */
   headers: Record<string, string>;
+  /**
+   * Form fields that must accompany a multipart POST alongside the file.
+   *
+   * Present only for providers that authenticate the upload with signed
+   * parameters rather than a signature baked into the URL. A client must send
+   * these unchanged: they are what the signature covers.
+   */
+  fields?: Record<string, string>;
   /**
    * The stored object's key. The client hands this back when it tells us the
    * upload finished; it is not a URL and cannot be fetched directly.
@@ -32,7 +45,7 @@ export type UploadTarget = {
 };
 
 export interface StorageProvider {
-  readonly name: "s3" | "local";
+  readonly name: "s3" | "local" | "cloudinary";
 
   /** A URL the client may upload one specific file to, once, soon. */
   signUpload(input: {
