@@ -147,6 +147,26 @@ pm2 startup                 # once per server; prints a command to run as root
 them lazily on first use, which means the first query of each kind is a
 collection scan under real load.
 
+### The first administrator
+
+Every other admin arrives by invitation from a platform admin, which leaves an
+obvious hole: the first one has nobody to invite them. `seed-admin` fills it in
+development and refuses to run in production, so on a real deployment this is
+the only way into the console:
+
+```bash
+npm run db:bootstrap -- gosaathapp@gmail.com "Sarmad Abbasi"
+```
+
+It **refuses if a platform administrator already exists**, and that is the
+point: a bootstrap that could be re-run would grant platform access to any
+address, with a shell on the box being the only thing in the way. Adding
+administrators after the first is the console's own job, where the action is
+recorded against whoever took it.
+
+No password is set. Admin sign-in is by emailed code, so a password would be an
+unused second way in — and an unused credential is one nobody rotates.
+
 Then confirm it is actually up before putting nginx in front:
 
 ```bash
