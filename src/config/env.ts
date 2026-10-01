@@ -63,6 +63,30 @@ const schema = z
      * documents want neither. "cloudinary" applies only to photos — a
      * student card is never sent there, whatever this is set to.
      */
+    /**
+     * Permits verification documents on local disk outside development.
+     *
+     * Off by default, and named so it cannot be switched on by accident or by
+     * copying someone else's .env. The refusal below exists because local disk
+     * is wrong for most deployments; this is the narrow case where it is not.
+     *
+     * Acceptable only when all of these hold, which is why it is a deliberate
+     * declaration rather than a default:
+     *
+     *   one server, with a persistent disk of its own
+     *   UPLOADS_DIR outside the web root, so nginx cannot serve it directly
+     *   every read still going through a signed, expiring URL this app
+     *   authorises per request
+     *
+     * Add a second instance and this becomes wrong immediately: the other
+     * server cannot read these files, and a verification queue would show
+     * documents that load for one admin and not another.
+     */
+    ALLOW_LOCAL_DOCUMENT_STORAGE: z
+      .string()
+      .optional()
+      .transform((value) => value === "true"),
+
     MEDIA_PROVIDER: z.enum(["cloudinary", "s3", "local"]).default("local"),
     CLOUDINARY_CLOUD_NAME: z.string().optional(),
     CLOUDINARY_API_KEY: optionalSecret(1),
@@ -203,14 +227,44 @@ const schema = z
         });
       }
 
-      if (value.UPLOADS_PROVIDER === "local") {
+      if (value.UPLOADS_PROVIDER === "local" && !value.ALLOW_LOCAL_DOCUMENT_STORAGE) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["UPLOADS_PROVIDER"],
           message:
             "UPLOADS_PROVIDER must be s3 outside development — local disk does " +
-            "not survive a redeploy, and a second server cannot read it",
+            "not survive a redeploy, and a second server cannot read it. Set " +
+            "ALLOW_LOCAL_DOCUMENT_STORAGE=true only on a single server with a " +
+            "persistent disk, with UPLOADS_DIR outside the web root",
         });
+      }
+
+      // A relative path resolves against the process's working directory,
+      // which under a process manager is not necessarily where anybody thinks
+      // it is — and "var/uploads" relative to the repo puts student ID cards
+      // inside a directory that a deploy can replace.
+      if (value.UPLOADS_PROVIDER === "local" && value.ALLOW_LOCAL_DOCUMENT_STORAGE) {
+        if (!value.UPLOADS_DIR.startsWith("/")) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["UPLOADS_DIR"],
+            message:
+              "UPLOADS_DIR must be an absolute path when storing documents on " +
+              "local disk, so it cannot land somewhere a deploy replaces",
+          });
+        }
+        if (/\/htdocs(\/|$)/.test(value.UPLOADS_DIR)) {
+          // The one mistake that would turn every student card into a public
+          // file: putting them where the web server already serves static
+          // files from.
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["UPLOADS_DIR"],
+            message:
+              "UPLOADS_DIR must not be inside a web root — documents there " +
+              "would be served directly by nginx, bypassing every check",
+          });
+        }
       }
 
       if (value.EMAIL_PROVIDER === "console") {
