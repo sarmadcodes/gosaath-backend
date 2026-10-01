@@ -77,7 +77,21 @@ const schema = z
     S3_ACCESS_KEY_ID: optionalSecret(1),
     S3_SECRET_ACCESS_KEY: optionalSecret(1),
 
-    MONGODB_URI: z.string().min(1),
+    /**
+     * Checked for shape, not just presence.
+     *
+     * A placeholder left in a production .env — "REPLACE_ME", a half-pasted
+     * URI — otherwise passes validation and fails later as an unexplained
+     * "not ready" from the health endpoint, which reads as an outage rather
+     * than a typo. Caught at boot instead, where the message can say so.
+     */
+    MONGODB_URI: z
+      .string()
+      .min(1)
+      .refine(
+        (value) => value.startsWith("mongodb://") || value.startsWith("mongodb+srv://"),
+        "MONGODB_URI must start with mongodb:// or mongodb+srv://",
+      ),
     MONGODB_DB: z.string().min(1).default("gosaath"),
     /** Pool ceiling. Sized to the deployment, not left to the driver default. */
     MONGODB_POOL_SIZE: z.coerce.number().int().min(1).max(200).default(20),
