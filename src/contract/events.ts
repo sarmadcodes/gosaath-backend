@@ -52,6 +52,14 @@ export type RealtimeEvent =
 
   // --- Verification and safety -------------------------------------------
   | { type: "verification.updated"; status: "pending" | "approved" | "rejected" }
+  /**
+   * A safety alert was raised, acknowledged or closed.
+   *
+   * Admin-facing. Carries the alert id and how many are open, so the safety
+   * centre and its badge move together; who raised it comes from the
+   * authorised endpoint like everything else.
+   */
+  | { type: "safety.updated"; alertId: string; open: number }
   | { type: "safety.blocked"; userId: string }
   | { type: "safety.unblocked"; userId: string }
   | { type: "account.suspended" }

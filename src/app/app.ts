@@ -20,6 +20,7 @@ import { commuteRoutes } from "../modules/commutes/commute.routes.js";
 import { matchRoutes } from "../modules/matching/match.routes.js";
 import { notificationRoutes } from "../modules/notifications/notification.routes.js";
 import { safetyRoutes } from "../modules/safety/safety.routes.js";
+import { publicTripRoutes } from "../modules/safety/trip-public.routes.js";
 import { realtimeRoutes } from "../modules/realtime/realtime.routes.js";
 import { adminAuthRoutes } from "../modules/admin/admin-auth.routes.js";
 import { adminRoutes } from "../modules/admin/admin.routes.js";
@@ -130,6 +131,10 @@ export async function buildApp(
       await api.register(matchRoutes);
       await api.register(notificationRoutes);
       await api.register(safetyRoutes);
+      // Public by design: the token in the path is the authorisation. Kept as
+      // its own registration so it is obvious that one route here is not
+      // behind the authenticate hook.
+      await api.register(publicTripRoutes);
       await api.register(realtimeRoutes);
       await api.register(adminAuthRoutes);
       await api.register(adminRoutes);

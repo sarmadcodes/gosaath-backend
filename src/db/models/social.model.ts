@@ -174,3 +174,121 @@ export const SupportRequestModel = model(
   supportRequestSchema,
   "supportRequests",
 );
+
+// ---------------------------------------------------------------------------
+// Trip shares
+// ---------------------------------------------------------------------------
+
+/**
+ * A link that lets somebody outside GoSaath see one ride.
+ *
+ * The point is accountability: a passenger tells a parent or a friend which
+ * car they are in and when they should be somewhere, so that somebody would
+ * notice if they were not.
+ *
+ * **It is not tracking, and it cannot become tracking.** There is no position
+ * in this document and none in the response it drives — the viewer sees the
+ * facts of a scheduled journey, which are the same facts the passenger could
+ * have typed into a message themselves. GoSaath holds no live location for
+ * anybody, so there is nothing here for a link to leak.
+ *
+ * The token is stored hashed. A link is a bearer credential handed to somebody
+ * with no account, so a database dump must not be a stack of working links —
+ * exactly the reasoning applied to session refresh tokens.
+ */
+const tripShareSchema = new Schema(
+  {
+    rideInstanceId: { type: Schema.Types.ObjectId, ref: "RideInstance", required: true },
+    /** The passenger or driver who shared it, and who alone may revoke it. */
+    sharedByUserId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+
+    /** SHA-256 of the token. The token itself is returned once and never stored. */
+    tokenHash: { type: String, required: true, select: false },
+
+    /**
+     * When the link stops working.
+     *
+     * Always set, and never far out: a share is for one journey. A link that
+     * outlives the ride is a link somebody forgot about, still answering
+     * questions about where a person goes on a Monday morning.
+     */
+    expiresAt: { type: Date, required: true },
+    revokedAt: { type: Date, default: null },
+
+    /** So the sharer can see whether anybody actually opened it. */
+    viewCount: { type: Number, default: 0 },
+    lastViewedAt: { type: Date, default: null },
+  },
+  baseOptions,
+);
+
+tripShareSchema.index({ tokenHash: 1 }, { unique: true });
+tripShareSchema.index({ sharedByUserId: 1, createdAt: -1 });
+/**
+ * Removed by Mongo once expired, a day after the fact.
+ *
+ * The row has no further purpose, and a table of who told whom about which
+ * journey is not something to keep for its own sake.
+ */
+tripShareSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 24 * 60 * 60 });
+
+export type TripShareDoc = InferSchemaType<typeof tripShareSchema>;
+export const TripShareModel = model("TripShare", tripShareSchema, "tripShares");
+
+// ---------------------------------------------------------------------------
+// Safety alerts
+// ---------------------------------------------------------------------------
+
+/**
+ * Somebody pressed the help button.
+ *
+ * Deliberately a record and a notification, not a dispatch. GoSaath cannot
+ * send anybody help: it has no control room, no phone line and no position for
+ * the person who pressed it. What it can honestly do is tell the institution's
+ * administrators immediately, keep an auditable record, and put the real
+ * emergency numbers one tap from the dialer — which the phone, not the app,
+ * then calls.
+ *
+ * Pretending to do more than that would be the most dangerous feature in the
+ * product: somebody in trouble deciding not to call 15 because an app told
+ * them help was coming.
+ */
+const safetyAlertSchema = new Schema(
+  {
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    institutionId: { type: Schema.Types.ObjectId, ref: "Institution", required: true },
+    /** The ride it was raised during, when there was one. */
+    rideInstanceId: {
+      type: Schema.Types.ObjectId,
+      ref: "RideInstance",
+      default: null,
+    },
+
+    kind: {
+      type: String,
+      enum: ["sos", "feelingUnsafe"],
+      required: true,
+    },
+    /** What the person typed, if anything. Never required: typing takes time. */
+    note: { type: String, default: null, maxlength: 2000 },
+
+    status: {
+      type: String,
+      enum: ["open", "acknowledged", "closed"],
+      default: "open",
+    },
+    acknowledgedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    acknowledgedAt: { type: Date, default: null },
+    closedAt: { type: Date, default: null },
+    /** What an administrator did about it. Read by nobody but administrators. */
+    resolution: { type: String, default: null, maxlength: 2000 },
+  },
+  baseOptions,
+);
+
+/** The admin safety queue: open first, newest first. */
+safetyAlertSchema.index({ institutionId: 1, status: 1, createdAt: -1 });
+safetyAlertSchema.index({ userId: 1, createdAt: -1 });
+
+export type SafetyAlertDoc = InferSchemaType<typeof safetyAlertSchema>;
+export const SafetyAlertModel = model("SafetyAlert", safetyAlertSchema, "safetyAlerts");

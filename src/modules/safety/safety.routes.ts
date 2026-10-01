@@ -2,6 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { authenticate, requireUser } from "../../middleware/authenticate.js";
 import * as safety from "./safety.service.js";
+import * as alerts from "./alert.service.js";
+import * as shares from "./trip-share.service.js";
 
 const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, "Not a valid id");
 
@@ -43,6 +45,61 @@ export async function safetyRoutes(app: FastifyInstance): Promise<void> {
   app.get("/safety/blocks", async (request) => ({
     data: await safety.blockedBy(requireUser(request).id),
   }));
+
+  // --- The help button ----------------------------------------------------
+
+  /**
+   * Raises a safety alert.
+   *
+   * Rate limited generously rather than tightly: somebody pressing this twice
+   * because they are frightened and not sure it worked must not be refused.
+   * The limit is there to stop a script, not a person.
+   */
+  app.post(
+    "/safety/alerts",
+    { config: { rateLimit: { max: 20, timeWindow: "1 hour" } } },
+    async (request) => {
+      const body = z
+        .object({
+          kind: z.enum(["sos", "feelingUnsafe"]),
+          rideInstanceId: objectId.optional(),
+          note: z.string().trim().max(2000).optional(),
+        })
+        .strict()
+        .parse(request.body);
+
+      return { data: await alerts.raiseAlert(requireUser(request).id, body) };
+    },
+  );
+
+  /** The emergency numbers, so a wrong one is not frozen into a binary. */
+  app.get("/safety/emergency-contacts", async () => ({
+    data: alerts.EMERGENCY_CONTACTS,
+  }));
+
+  app.get("/safety/alerts", async (request) => ({
+    data: await alerts.myAlerts(requireUser(request).id),
+  }));
+
+  // --- Trip sharing -------------------------------------------------------
+
+  app.post("/rides/:id/share", async (request) => {
+    const { id } = z.object({ id: objectId }).parse(request.params);
+    // The token is in this response and in no other. Read access to the
+    // account later must not hand somebody the link itself.
+    return { data: await shares.shareTrip(requireUser(request).id, id) };
+  });
+
+  app.get("/rides/:id/share", async (request) => {
+    const { id } = z.object({ id: objectId }).parse(request.params);
+    return { data: await shares.myTripShare(requireUser(request).id, id) };
+  });
+
+  app.delete("/rides/:id/share", async (request, reply) => {
+    const { id } = z.object({ id: objectId }).parse(request.params);
+    await shares.revokeTripShare(requireUser(request).id, id);
+    return reply.code(204).send();
+  });
 
   app.post(
     "/support",

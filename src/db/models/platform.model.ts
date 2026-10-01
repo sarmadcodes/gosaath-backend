@@ -1,10 +1,23 @@
 import { Schema, model, type InferSchemaType } from "mongoose";
 import { baseOptions } from "./shared.js";
+import type { NotificationKind } from "../../contract/types.js";
 
 // ---------------------------------------------------------------------------
 // Notifications and push tokens
 // ---------------------------------------------------------------------------
 
+/**
+ * Every notification kind the collection will accept.
+ *
+ * Tied to the contract below rather than merely resembling it. This list used
+ * to be an independent copy of `NotificationKind`, and adding a kind to the
+ * contract without adding it here produced the worst possible failure: the
+ * write was rejected, `notifyQuietly` swallowed the error exactly as designed,
+ * and administrators were simply never told about safety alerts. Nothing
+ * logged a problem because nothing considered it one.
+ *
+ * The assertion underneath makes that a build failure instead.
+ */
 const NOTIFICATION_KINDS = [
   "seatRequest",
   "requestAccepted",
@@ -16,7 +29,24 @@ const NOTIFICATION_KINDS = [
   "cancellation",
   "badgeUpdate",
   "institutionApproved",
-];
+  "safetyAlert",
+] as const satisfies readonly NotificationKind[];
+
+/**
+ * Compile-time exhaustiveness.
+ *
+ * If a kind exists in the contract and not in the array above, `Missing`
+ * becomes that kind's name and this assignment fails to compile — naming the
+ * one that was forgotten.
+ */
+type MissingNotificationKind = Exclude<
+  NotificationKind,
+  (typeof NOTIFICATION_KINDS)[number]
+>;
+const _allNotificationKindsAccepted: MissingNotificationKind extends never
+  ? true
+  : MissingNotificationKind = true;
+void _allNotificationKindsAccepted;
 
 const notificationSchema = new Schema(
   {

@@ -448,7 +448,9 @@ export type NotificationKind =
   | "rideReminder"
   | "cancellation"
   | "badgeUpdate"
-  | "institutionApproved";
+  | "institutionApproved"
+  /** Somebody raised a safety alert. Goes to administrators, not to members. */
+  | "safetyAlert";
 
 export type AppNotification = {
   id: string;
