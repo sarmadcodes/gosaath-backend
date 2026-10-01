@@ -32,6 +32,20 @@ export default defineConfig({
        */
       MEDIA_PROVIDER: "local",
       UPLOADS_PROVIDER: "local",
+      /**
+       * Never a real mail provider, whatever .env says.
+       *
+       * The suite registers dozens of accounts, and each one sends a
+       * verification email. Pointed at Resend it tried to deliver to
+       * @szabist.edu.pk addresses that do not exist — which failed the run,
+       * but the quieter version of that bug is a test suite that quietly
+       * emails real people and burns a sending quota every time it runs.
+       *
+       * The console provider also keeps the code readable, which is how tests
+       * that need one get it.
+       */
+      EMAIL_PROVIDER: "console",
+      RESEND_API_KEY: "",
     },
     // Database tests share one database, so parallel files would race on the
     // same collections. Cheap to serialise at this size.

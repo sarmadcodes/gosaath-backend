@@ -10,6 +10,7 @@ import {
 import { isoDate, startOfDay, upcomingDays } from "../../utils/dates.js";
 import { toPublicUser } from "../users/user.mapper.js";
 import { searchRides } from "../rides/ride.service.js";
+import { publish } from "../realtime/hub.js";
 import { notifyQuietly } from "../notifications/notification.service.js";
 import type {
   CommuteDay,
@@ -241,6 +242,7 @@ async function notifyPassengers(
   instanceIds: unknown[],
   driverId: string,
   days: Weekday[],
+  commuteId: unknown,
 ): Promise<void> {
   const riders = await AttendanceModel.find({
     rideInstanceId: { $in: instanceIds },
@@ -266,6 +268,23 @@ async function notifyPassengers(
       }),
     ),
   );
+
+  // The notification tells them; this updates whatever they are looking at.
+  // Without it a passenger with the week open sees a ride still marked as
+  // running until they pull to refresh — the exact stale screen the live layer
+  // exists to prevent, and the worst case for it to happen in.
+  for (const riderId of uniqueRiders) {
+    for (const instanceId of instanceIds) {
+      publish(
+        { kind: "user", userId: riderId },
+        {
+          type: "driverUnavailable",
+          rideId: String(instanceId),
+          commuteId: String(commuteId),
+        },
+      );
+    }
+  }
 }
 
 /**
@@ -323,7 +342,7 @@ export async function setUnavailable(
     // Outside any transaction and never awaited for delivery, so a
     // notification failure cannot undo the driver's declaration — which has
     // already happened whether or not the message gets through.
-    await notifyPassengers(affected.map((i) => i._id), userId, days);
+    await notifyPassengers(affected.map((i) => i._id), userId, days, commute._id);
   }
 
   logger.info(
