@@ -2,7 +2,7 @@ import { buildApp } from "./app.js";
 import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
 import { connectToDatabase, disconnectFromDatabase } from "../db/mongodb.js";
-import { runScheduler } from "../modules/commutes/scheduler.service.js";
+import { runSchedulerLocked } from "../modules/commutes/scheduler.service.js";
 import { closeAll } from "../modules/realtime/hub.js";
 
 /**
@@ -41,7 +41,7 @@ async function main(): Promise<void> {
     const tick = () => {
       // Never awaited by anything that serves a request, and never allowed to
       // throw into the process: a failed pass is logged and retried next tick.
-      void runScheduler().catch((error: unknown) => {
+      void runSchedulerLocked().catch((error: unknown) => {
         logger.error({ err: error }, "scheduler pass failed");
       });
     };

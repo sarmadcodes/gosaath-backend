@@ -1,0 +1,135 @@
+# GoSaath API — nginx reverse proxy
+#
+# Copy into CloudPanel's vhost editor for api.gosaath.sarmads.tech, or into
+# /etc/nginx/sites-available/ if managing nginx directly. CloudPanel writes the
+# certbot/Let's Encrypt block itself, so the TLS lines below are the shape to
+# expect rather than something to paste over what it generated.
+#
+# The one part that is easy to get wrong is the event stream. nginx buffers
+# proxied responses by default, which for Server-Sent Events means nothing
+# arrives until the buffer fills — so the app appears to work, receives no live
+# updates, and gives no error anywhere. The /api/v1/events location below turns
+# buffering off and lifts the read timeout past the stream's own lifetime.
+
+upstream gosaath_api {
+    server 127.0.0.1:4000;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name api.gosaath.sarmads.tech;
+
+    # Everything except the ACME challenge goes to HTTPS.
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name api.gosaath.sarmads.tech;
+
+    ssl_certificate     /etc/letsencrypt/live/api.gosaath.sarmads.tech/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.gosaath.sarmads.tech/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # HSTS. Set only once the certificate is known to work: a browser that has
+    # seen this will refuse plain HTTP to this host for two years, including
+    # during a broken renewal.
+    add_header Strict-Transport-Security "max-age=63072000" always;
+
+    # The API serves JSON to a native app and to one known web origin. It
+    # renders no HTML of its own, so there is no page here for a frame or a
+    # script to be injected into — these are belt-and-braces, and the real CORS
+    # decision is the app's own allow-list in CORS_ORIGINS.
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "no-referrer" always;
+
+    # A profile photo is at most 5 MB and a student card 10 MB, but neither
+    # passes through here: both are uploaded straight to Cloudinary or R2 with a
+    # signed URL. Request bodies to this API are JSON, so this is small on
+    # purpose.
+    client_max_body_size 1m;
+
+    # --- The event stream ---------------------------------------------------
+    # Must come before the catch-all location.
+    location /api/v1/events {
+        proxy_pass http://gosaath_api;
+        proxy_http_version 1.1;
+
+        # The whole point. With buffering on, events sit in nginx until the
+        # buffer fills and the app silently never updates.
+        proxy_buffering off;
+        proxy_cache off;
+        gzip off;
+
+        # Longer than the stream's own ten-minute lifetime, so nginx never
+        # closes a healthy connection first. The app recycles streams itself
+        # before the access token expires.
+        proxy_read_timeout 15m;
+        proxy_send_timeout 15m;
+
+        # Connection: keep-alive rather than upgrade — SSE is plain HTTP.
+        proxy_set_header Connection "";
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # The admin stream, same treatment.
+    location /api/v1/admin/events {
+        proxy_pass http://gosaath_api;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_cache off;
+        gzip off;
+        proxy_read_timeout 15m;
+        proxy_send_timeout 15m;
+        proxy_set_header Connection "";
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # --- Health probes ------------------------------------------------------
+    # Never logged: a probe every few seconds is the majority of the access log
+    # otherwise, and it buries the requests worth reading.
+    location /health {
+        proxy_pass http://gosaath_api;
+        proxy_set_header Host $host;
+        access_log off;
+    }
+
+    # --- Everything else ----------------------------------------------------
+    location / {
+        proxy_pass http://gosaath_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # The app's own request timeout is 20s; this sits just outside it so a
+        # slow request is reported by the app, with its own error shape, rather
+        # than as a bare 504 from nginx.
+        proxy_read_timeout 30s;
+        proxy_connect_timeout 5s;
+    }
+}

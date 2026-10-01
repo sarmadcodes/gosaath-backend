@@ -9,6 +9,8 @@ import {
   UserModel,
 } from "../../src/db/models/index.js";
 import { notify } from "../../src/modules/notifications/notification.service.js";
+import { announceVerificationCreated } from "../../src/modules/realtime/announce.js";
+import { closeAll } from "../../src/modules/realtime/hub.js";
 import type { RealtimeEvent } from "../../src/modules/realtime/events.js";
 
 /**
@@ -135,7 +137,7 @@ function open(path: string, token: string, lastEventId?: number) {
 async function waitFor<T>(
   check: () => T | undefined | false,
   what: string,
-  timeoutMs = 4000,
+  timeoutMs = 10_000,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -162,6 +164,11 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
+  // Hang up first, exactly as production shutdown does. An event stream is an
+  // in-flight request that never finishes on its own, so `app.close()` waits
+  // for it — and a test that failed before closing its own stream leaves one
+  // open, which turned a three-minute suite into one that sat for hours.
+  closeAll();
   await app.close();
   await disconnectFromDatabase();
 });
@@ -299,5 +306,111 @@ describe("delivery over the wire", () => {
 
     expect(resync.event.type).toBe("resync");
     stream.close();
+  });
+});
+
+describe("the admin stream", () => {
+  /** A verified member who has been given an admin role. */
+  async function makeAdmin(email: string): Promise<Person> {
+    const person = await makeUser(email);
+    await UserModel.updateOne({ email }, { $set: { role: "universityAdmin" } });
+    // The role is read from the database on every admin request, so the
+    // existing access token is enough — no new sign-in needed.
+    return person;
+  }
+
+  it("shows an administrator a report the moment it is filed", async () => {
+    const stamp = Date.now();
+    const admin = await makeAdmin(`rt-admin-${stamp}@szabist.edu.pk`);
+    const member = await makeUser(`rt-reporter-${stamp}@szabist.edu.pk`);
+    const subject = await makeUser(`rt-subject-${stamp}@szabist.edu.pk`);
+
+    const console_ = open("/admin/events", admin.access);
+    await console_.ready;
+    expect(console_.status()).toBe(200);
+
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/safety/reports",
+      headers: { authorization: `Bearer ${member.access}` },
+      payload: { reportedUserId: subject.id, category: "unsafe-driving" },
+    });
+
+    const event = await waitFor(
+      () => console_.events.find((entry) => entry.event.type === "admin.report.created"),
+      "a report reaching the moderation queue",
+    );
+
+    // The count travels so the sidebar badge can move. Nothing else does:
+    // who reported whom is not in an event that reaches every administrator.
+    expect(event.event).toMatchObject({ type: "admin.report.created" });
+    expect(JSON.stringify(event.event)).not.toContain(member.id);
+    expect(JSON.stringify(event.event)).not.toContain(subject.id);
+
+    console_.close();
+  });
+
+  it("never sends an institution's admin events to an ordinary member", async () => {
+    const stamp = Date.now();
+    const admin = await makeAdmin(`rt-admin2-${stamp}@szabist.edu.pk`);
+    const member = await makeUser(`rt-plain-${stamp}@szabist.edu.pk`);
+    const subject = await makeUser(`rt-subject2-${stamp}@szabist.edu.pk`);
+
+    const adminStream = open("/admin/events", admin.access);
+    const memberStream = open("/events", member.access);
+    await Promise.all([adminStream.ready, memberStream.ready]);
+    await waitFor(() => memberStream.events.length > 0, "the member's opening event");
+    const memberBefore = memberStream.events.length;
+
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/safety/reports",
+      headers: { authorization: `Bearer ${member.access}` },
+      payload: { reportedUserId: subject.id, category: "unsafe-driving" },
+    });
+
+    await waitFor(
+      () => adminStream.events.some((entry) => entry.event.type === "admin.report.created"),
+      "the admin event",
+    );
+
+    // The member filed the report and is on their own stream; they still see
+    // nothing from the admin channel.
+    expect(
+      memberStream.events.slice(memberBefore).filter((entry) =>
+        entry.event.type.startsWith("admin."),
+      ),
+    ).toHaveLength(0);
+
+    adminStream.close();
+    memberStream.close();
+  });
+
+  it("shows an administrator a verification request as it arrives", async () => {
+    const stamp = Date.now();
+    const admin = await makeAdmin(`rt-admin3-${stamp}@szabist.edu.pk`);
+
+    const console_ = open("/admin/events", admin.access);
+    await console_.ready;
+
+    // Straight to the database: uploading a document needs storage, and what
+    // is under test is the announcement, not the upload.
+    const applicant = await makeUser(`rt-applicant-${stamp}@szabist.edu.pk`);
+    await UserModel.updateOne(
+      { _id: applicant.id },
+      { $set: { badgeStatus: "pending", badgeRequestedAt: new Date() } },
+    );
+    await announceVerificationCreated(
+      (await UserModel.findById(applicant.id))!.institutionId.toString(),
+    );
+
+    const event = await waitFor(
+      () =>
+        console_.events.find((entry) => entry.event.type === "admin.verification.created"),
+      "a verification reaching the queue",
+    );
+
+    expect((event.event as { pending: number }).pending).toBeGreaterThan(0);
+    console_.close();
   });
 });

@@ -1,5 +1,7 @@
 import { randomInt } from "node:crypto";
 import { Types } from "mongoose";
+import { announceReportCreated } from "../realtime/announce.js";
+import { publish } from "../realtime/hub.js";
 import { logger } from "../../utils/logger.js";
 import { NotFoundError, UnprocessableError } from "../../utils/errors.js";
 import {
@@ -84,6 +86,12 @@ export async function fileReport(
   // The detail is not logged. It is a person's account of something that
   // happened to them and belongs in the moderation queue, not the log stream.
   logger.info({ reporterId, category: input.category }, "report filed");
+
+  // The moderation queue gains a row for every administrator of this
+  // institution who has the console open. Only the count travels: who reported
+  // whom, and why, is the most sensitive thing in this system, and an admin
+  // event reaches every administrator rather than the one who opens the queue.
+  await announceReportCreated(reporter.institutionId.toString());
 }
 
 /**
@@ -138,11 +146,21 @@ export async function block(blockerId: string, blockedId: string): Promise<void>
   // Nobody is notified. The blocked person must not be able to tell a block
   // from somebody simply having stopped travelling.
   logger.info({ blockerId }, "user blocked");
+
+  // Published to the blocker's own devices and to nobody else — deliberately
+  // NOT to the blocked person, even though their cancelled request is
+  // something they are allowed to see. They would see it on their next fetch
+  // either way; a live event would make it arrive the instant the block
+  // happened, and that timing is the signal this flow exists to withhold.
+  publish({ kind: "user", userId: blockerId }, { type: "safety.blocked", userId: blockedId });
 }
 
 export async function unblock(blockerId: string, blockedId: string): Promise<void> {
   // Idempotent: unblocking somebody who was not blocked is a no-op.
   await BlockModel.deleteOne({ blockerId, blockedId });
+
+  // The blocker's own devices only, for the same reason as `block`.
+  publish({ kind: "user", userId: blockerId }, { type: "safety.unblocked", userId: blockedId });
 }
 
 /** Only the people the caller blocked — never who blocked them. */

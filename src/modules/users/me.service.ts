@@ -1,4 +1,5 @@
 import { Types } from "mongoose";
+import { announceVerificationCreated } from "../realtime/announce.js";
 import { logger } from "../../utils/logger.js";
 import {
   AuthenticationError,
@@ -154,6 +155,11 @@ export async function requestBadge(
   }
 
   logger.info({ userId }, "badge requested");
+
+  // The verification queue gains a row for every administrator of this
+  // institution with the console open, and the sidebar count moves with it.
+  await announceVerificationCreated(user.institutionId.toString());
+
   return toUser(user);
 }
 

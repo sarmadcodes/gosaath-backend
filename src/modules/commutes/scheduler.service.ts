@@ -4,6 +4,7 @@ import {
   UserModel,
 } from "../../db/models/index.js";
 import { instantAt } from "../../utils/dates.js";
+import { withLock } from "../../utils/lock.js";
 import { logger } from "../../utils/logger.js";
 import { drainPushOutbox, notifyQuietly } from "../notifications/notification.service.js";
 import { generateAllInstances } from "./instance.service.js";
@@ -293,4 +294,32 @@ export async function runScheduler(now = new Date()): Promise<SchedulerResult> {
   );
 
   return { generated, confirmed, orphansFlagged, remindersSent };
+}
+
+/**
+ * One pass, but only if nobody else is mid-pass.
+ *
+ * What every deployment entry point should call. `runScheduler` stays
+ * unguarded so tests can drive it directly, but nothing in production should:
+ * two app instances each hold their own timer, a cron entry may run
+ * `npm run scheduler` alongside them, and during a deploy the old process
+ * overlaps the new one. Each of those is a second pass.
+ *
+ * Every write underneath is idempotent, so an overlap is wasted work rather
+ * than damage — which is exactly why an advisory lock is enough and a queue
+ * would be over-engineering.
+ */
+export async function runSchedulerLocked(
+  now = new Date(),
+): Promise<SchedulerResult | null> {
+  // Comfortably longer than a pass takes, comfortably shorter than an outage
+  // would go unnoticed. A holder that dies mid-pass blocks the next one for at
+  // most this long.
+  const result = await withLock("scheduler", 4 * 60_000, () => runScheduler(now));
+
+  if (!result.ran) {
+    logger.debug("scheduler pass skipped; another process holds the lock");
+    return null;
+  }
+  return result.value;
 }
