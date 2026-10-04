@@ -80,7 +80,13 @@ async function makeUser(email: string, name: string): Promise<Person> {
   });
   if (registered.statusCode >= 400) throw new Error(`register: ${registered.body}`);
 
-  await UserModel.updateOne({ email }, { $set: { emailVerifiedAt: new Date() } });
+  // Verified, because offering seats now requires it. These tests are about
+  // commutes and matching, not about the verification gate — that has its own
+  // file.
+  await UserModel.updateOne(
+    { email },
+    { $set: { emailVerifiedAt: new Date(), badgeStatus: "approved" } },
+  );
 
   const login = await app.inject({
     method: "POST",

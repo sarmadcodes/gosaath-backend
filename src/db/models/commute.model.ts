@@ -107,6 +107,17 @@ const rideInstanceSchema = new Schema(
     },
 
     /**
+     * Why the driver could not make it, in their own words.
+     *
+     * Kept for the record and for an administrator looking at a pattern of
+     * dropped rides. Deliberately NOT sent to passengers: they are told the
+     * ride is off and shown cover, which is what they can act on. A reason
+     * typed in a hurry is between the driver and the people who run the
+     * service, not broadcast to everyone who had a seat.
+     */
+    unavailableReason: { type: String, default: null, maxlength: 500 },
+
+    /**
      * Capacity, held here rather than on the Commute.
      *
      * Seats are a property of one day: a driver with a full car on Monday may

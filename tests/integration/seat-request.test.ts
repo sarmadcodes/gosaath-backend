@@ -63,7 +63,13 @@ async function makeUser(email: string): Promise<Person> {
       areaId,
     },
   });
-  await UserModel.updateOne({ email }, { $set: { emailVerifiedAt: new Date() } });
+  // Verified, because offering seats now requires it. These tests are about
+  // commutes and matching, not about the verification gate — that has its own
+  // file.
+  await UserModel.updateOne(
+    { email },
+    { $set: { emailVerifiedAt: new Date(), badgeStatus: "approved" } },
+  );
 
   const login = await app.inject({
     method: "POST",

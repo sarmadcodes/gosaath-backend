@@ -15,6 +15,7 @@ import {
   VehicleModel,
 } from "../../db/models/index.js";
 import { generateInstancesFor, cancelFutureInstances } from "./instance.service.js";
+import { startOfDay } from "../../utils/dates.js";
 import type { Commute, DaySchedule } from "../../contract/types.js";
 import type { CommuteInput } from "../../contract/api.js";
 
@@ -115,6 +116,22 @@ async function resolveContext(userId: string, input: CommuteDraft) {
   const offering = input.intent === "offer" || input.intent === "both";
 
   if (offering) {
+    // Verification first, before the vehicle check, because it is the longer
+    // thing to fix: adding a car takes a minute, getting a student card
+    // approved takes an administrator. Telling somebody about the car and
+    // then about the badge would be two trips.
+    //
+    // Enforced here rather than in the app. The app hides the Offer tab
+    // behind the same rule, but a hidden button is not a check — this is the
+    // one that actually holds.
+    if (user.badgeStatus !== "approved") {
+      throw new BusinessRuleError(
+        user.badgeStatus === "pending"
+          ? "Your verification is still being reviewed. You can offer seats once it is approved."
+          : "Verify your student card before offering seats. It takes a minute from your profile.",
+      );
+    }
+
     if (!input.vehicleId) {
       throw new UnprocessableError("Add a vehicle before offering seats.");
     }
@@ -205,6 +222,51 @@ export async function updateCommute(
       : {}),
     womenOnly: patch.womenOnly ?? commute.womenOnly,
   };
+
+  // Changing what this commute is for, while people are relying on it.
+  //
+  // Refused rather than cascaded. Switching from offering to finding would
+  // leave confirmed passengers with a seat in a car that is no longer being
+  // driven, and switching the other way would leave this person holding a seat
+  // they have stopped intending to use. Either is somebody standing at a kerb
+  // tomorrow morning, and neither is worth a toggle doing silently.
+  //
+  // So the person cancels first, deliberately, and the people affected are
+  // told by the cancellation — which already notifies them properly.
+  if (patch.intent !== undefined && patch.intent !== commute.intent) {
+    const [passengers, ownSeat] = await Promise.all([
+      AttendanceModel.countDocuments({
+        rideInstanceId: {
+          $in: await RideInstanceModel.find({
+            commuteId: commute._id,
+            date: { $gte: startOfDay(new Date()) },
+            status: { $ne: "cancelled" },
+          }).distinct("_id"),
+        },
+        role: "passenger",
+        status: "confirmed",
+      }),
+      AttendanceModel.countDocuments({
+        userId,
+        role: "passenger",
+        status: "confirmed",
+      }),
+    ]);
+
+    if (passengers > 0) {
+      throw new BusinessRuleError(
+        passengers === 1
+          ? "Somebody has a confirmed seat with you. Cancel that ride before you stop offering."
+          : `${passengers} people have confirmed seats with you. Cancel those rides before you stop offering.`,
+      );
+    }
+
+    if (ownSeat > 0) {
+      throw new BusinessRuleError(
+        "You have a confirmed seat in somebody else's car. Cancel it before you start offering.",
+      );
+    }
+  }
 
   const { campus, area, vehicleId, offering } = await resolveContext(userId, merged);
 

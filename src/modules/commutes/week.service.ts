@@ -298,6 +298,7 @@ export async function setUnavailable(
   userId: string,
   commuteId: string,
   days: Weekday[],
+  reason?: string,
 ): Promise<CommuteDay[]> {
   // Only the owner. A passenger declaring the driver unavailable would strand
   // everybody else on the ride.
@@ -324,7 +325,15 @@ export async function setUnavailable(
   if (affected.length > 0) {
     await RideInstanceModel.updateMany(
       { _id: { $in: affected.map((i) => i._id) } },
-      { $set: { status: "noDriver" } },
+      {
+        $set: {
+          status: "noDriver",
+          // Recorded, never forwarded. Passengers are told the ride is off and
+          // shown cover; the reason is for the record and for an admin looking
+          // at somebody who drops out every week.
+          unavailableReason: reason?.trim() || null,
+        },
+      },
     );
     // Passengers are moved to pending, not cancelled: they still want the
     // ride, they just need somebody to drive it.

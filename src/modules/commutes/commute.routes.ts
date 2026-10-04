@@ -122,10 +122,16 @@ export async function commuteRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/commutes/:id/unavailable", async (request) => {
     const { id } = z.object({ id: objectId }).parse(request.params);
-    const { days } = z
-      .object({ days: z.array(weekday).min(1).max(7) })
+    const { days, reason } = z
+      .object({
+        days: z.array(weekday).min(1).max(7),
+        /** Optional: somebody in a hurry should not be blocked by a text box. */
+        reason: z.string().trim().max(500).optional(),
+      })
       .strict()
       .parse(request.body);
-    return { data: await week.setUnavailable(requireUser(request).id, id, days) };
+    return {
+      data: await week.setUnavailable(requireUser(request).id, id, days, reason),
+    };
   });
 }
