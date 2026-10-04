@@ -54,7 +54,9 @@ export const registerSchema = z
     phone,
     photoUrl: z.string().url().max(2000).nullish(),
     // "employee" is absent on purpose: the schema supports it for the future
-    // organisation launch, the API does not accept it yet.
+    // organisation launch, the API does not accept it yet. The sign-up screen
+    // shows it as "coming soon" and does not let it be chosen, so the two
+    // agree — see the test that pins this.
     userType: z.enum(["student", "teacher"]),
     institutionId: objectId,
     campusId: objectId,
