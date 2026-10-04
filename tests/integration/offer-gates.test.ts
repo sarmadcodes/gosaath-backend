@@ -335,3 +335,103 @@ describe("telling people you cannot make it", () => {
     expect(response.statusCode).toBe(200);
   });
 });
+
+describe("verification by email domain", () => {
+  /**
+   * Confirms the address the way the OTP route does.
+   *
+   * The challenge registration created is cleared first: issuing a second code
+   * inside the resend cooldown is refused, which is correct behaviour and has
+   * nothing to do with what these tests are about.
+   */
+  async function confirmEmail(email: string) {
+    const { OtpChallengeModel } = await import("../../src/db/models/index.js");
+    await OtpChallengeModel.deleteOne({ email, purpose: "verifyEmail" });
+
+    const { issueOtp } = await import("../../src/modules/auth/otp.service.js");
+    const auth = await import("../../src/modules/auth/auth.service.js");
+    const { code } = await issueOtp({ email, purpose: "verifyEmail" });
+    return auth.verifyEmailOtp(email, code, { ip: "127.0.0.1", userAgent: "test" });
+  }
+
+  /** The real path: register, then confirm the emailed code. */
+  async function registerAndVerify(email: string) {
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/register",
+      payload: {
+        name: "Domain Person",
+        email,
+        password: "a-long-enough-passphrase",
+        phone: "0300 5551234",
+        userType: "student",
+        institutionId,
+        campusId,
+        areaId,
+      },
+    });
+
+    return email;
+  }
+
+  it("approves the badge when the institution's own email is confirmed", async () => {
+    const email = `og-domain-${Date.now()}@szabist.edu.pk`;
+    await registerAndVerify(email);
+
+    // Before confirming, nothing is claimed.
+    expect((await UserModel.findOne({ email }))!.badgeStatus).toBe("none");
+
+    await confirmEmail(email);
+
+    const user = await UserModel.findOne({ email });
+    expect(user!.badgeStatus).toBe("approved");
+    // No administrator reviewed this, and recording one who did not would make
+    // the audit trail a lie.
+    expect(user!.badgeReviewedBy).toBeNull();
+    expect(user!.badgeReviewedAt).not.toBeNull();
+  });
+
+  it("lets a freshly verified member offer seats straight away", async () => {
+    const email = `og-domain-offer-${Date.now()}@szabist.edu.pk`;
+    await registerAndVerify(email);
+
+    const session = await confirmEmail(email);
+
+    const refreshed = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/refresh",
+      payload: { token: session.token },
+    });
+    const access = refreshed.json().data.accessToken as string;
+
+    const vehicle = await api("PUT", "/vehicles", access, {
+      type: "car",
+      model: "Honda City",
+      plate: "AXB-704",
+      colour: "Silver",
+    });
+
+    const response = await api(
+      "POST",
+      "/commutes",
+      access,
+      offerBody(vehicle.json().data.id as string),
+    );
+
+    // The whole point: a pilot has drivers on its first morning rather than
+    // waiting for somebody to work a queue.
+    expect(response.statusCode).toBe(200);
+  });
+
+  it("does not overturn a rejection an administrator made", async () => {
+    const email = `og-rejected-${Date.now()}@szabist.edu.pk`;
+    await registerAndVerify(email);
+    await UserModel.updateOne({ email }, { $set: { badgeStatus: "rejected" } });
+
+    await confirmEmail(email).catch(() => null);
+
+    // A rejection is a decision about a specific person. Confirming an email
+    // address is not grounds to quietly reverse it.
+    expect((await UserModel.findOne({ email }))!.badgeStatus).toBe("rejected");
+  });
+});

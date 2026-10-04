@@ -192,10 +192,38 @@ export async function verifyEmailOtp(
 
   if (!user.emailVerifiedAt) {
     user.emailVerifiedAt = new Date();
+
+    // Verified by domain, here, rather than by an administrator reading a
+    // photograph of a student card.
+    //
+    // Registration already refuses any address outside the institution's own
+    // domains, and this code proves the person controls that address. Between
+    // them that is stronger evidence of enrolment than a card scan, which an
+    // admin can only eyeball — and it arrives instantly instead of waiting in
+    // a queue.
+    //
+    // It matters because offering seats now requires verification: without
+    // this, nobody can drive until somebody approves them by hand, every time,
+    // and a pilot has no drivers on its first morning.
+    //
+    // Only from "none". A rejected badge is an administrator's decision about
+    // a specific person and is not for this to quietly overturn; somebody in
+    // "pending" has a card already in the queue and keeps their place.
+    if (user.badgeStatus === "none") {
+      user.badgeStatus = "approved";
+      user.badgeReviewedAt = new Date();
+      // Left null on purpose: no administrator reviewed this, and recording
+      // one who did not would make the audit trail a lie.
+      user.badgeReviewedBy = null;
+    }
+
     await user.save();
   }
 
-  logger.info({ userId: user._id.toString() }, "email verified");
+  logger.info(
+    { userId: user._id.toString(), badge: user.badgeStatus },
+    "email verified",
+  );
   return buildSession(user, context);
 }
 
