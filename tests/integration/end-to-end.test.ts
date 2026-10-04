@@ -262,6 +262,14 @@ describe("two students, one commute, no refreshing", () => {
       const rideId = withRide.find((row) => row.user.id === driver.id)?.rideId;
       expect(rideId, "the match should offer a specific ride to ask about").toBeDefined();
 
+      // Which weekday that ride falls on is NOT fixed: the match offers the
+      // next bookable instance, so on a Monday afternoon it is Wednesday and
+      // on a Friday it is Monday. An earlier version of this test assumed
+      // Monday and passed only on the days when that happened to be true.
+      const booked = await RideInstanceModel.findById(rideId).lean();
+      const bookedDay = booked!.day;
+      const otherDay = bookedDay === "Mon" ? "Wed" : "Mon";
+
       // --- 2. The rider asks for a seat --------------------------------------
       const asked = await api("POST", `/rides/${rideId}/request`, rider.access, { seats: 1 });
       ok(asked, "asking for a seat");
@@ -313,14 +321,14 @@ describe("two students, one commute, no refreshing", () => {
         "the phone number should be released once a seat is accepted",
       ).toBeTruthy();
 
-      // --- 5. The driver cannot make Monday ----------------------------------
+      // --- 5. The driver cannot make the day the rider booked ----------------
       const unavailable = await api(
         "POST",
         `/commutes/${driverCommuteId}/unavailable`,
         driver.access,
-        { days: ["Mon"] },
+        { days: [bookedDay] },
       );
-      ok(unavailable, "declaring Monday unavailable");
+      ok(unavailable, "declaring that day unavailable");
 
       // The passenger finds out immediately rather than at the kerb.
       await riderPhone.expect("driverUnavailable", "the rider is told the driver dropped out");
@@ -351,7 +359,7 @@ describe("two students, one commute, no refreshing", () => {
         direction: "both",
         campusId,
         originAreaId: areaId,
-        schedule: [{ day: "Mon", arriveBy: "08:00", leaveCampusAt: "17:00" }],
+        schedule: [{ day: bookedDay, arriveBy: "08:00", leaveCampusAt: "17:00" }],
         vehicleId: coverVehicle.json().data.id,
         seatsOffered: 2,
         contribution: 300,
@@ -361,14 +369,14 @@ describe("two students, one commute, no refreshing", () => {
 
       const replacements = await api(
         "GET",
-        `/commutes/${driverCommuteId}/replacements?day=Mon`,
+        `/commutes/${driverCommuteId}/replacements?day=${bookedDay}`,
         rider.access,
       );
       ok(replacements, "listing replacements");
       const option = (
         replacements.json().data as Array<{ id: string; driver: { id: string } }>
       ).find((row) => row.driver.id === cover.id);
-      expect(option, "cover for Monday should be offered").toBeDefined();
+      expect(option, "cover for that day should be offered").toBeDefined();
 
       // The passenger chooses. Nobody was moved for them — the product rule is
       // that a replacement is requested, never assigned.
@@ -400,13 +408,14 @@ describe("two students, one commute, no refreshing", () => {
       });
       expect(newSeat!.status).toBe("confirmed");
 
-      // And the original driver's commute is untouched for Wednesday: saying
-      // "not Monday" means the Monday coming, not Mondays forever.
-      const wednesday = await RideInstanceModel.findOne({
+      // The commute's other day is untouched: declaring one day unavailable
+      // means the next occurrence of that day, not that day forever, and
+      // certainly not the rest of the week.
+      const untouched = await RideInstanceModel.findOne({
         commuteId: driverCommuteId,
-        day: "Wed",
+        day: otherDay,
       });
-      expect(wednesday!.status).toBe("scheduled");
+      expect(untouched!.status).toBe("scheduled");
 
       driverPhone.close();
       riderPhone.close();

@@ -264,6 +264,23 @@ export interface NotificationsApi {
   unregisterPushToken(token: string): Promise<void>;
 }
 
+export type EmergencyContact = { label: string; number: string };
+
+export type RaisedAlert = {
+  id: string;
+  /** The numbers to offer, in the order to try them. Served, not hardcoded. */
+  contacts: EmergencyContact[];
+  /** How many administrators were told, so the screen can say so honestly. */
+  notified: number;
+};
+
+/** What the sharer sees about their own link. Never the token itself. */
+export type TripShareStatus = {
+  active: boolean;
+  expiresAt: string | null;
+  viewCount: number;
+};
+
 export interface SafetyApi {
   report(input: {
     reportedUserId?: string;
@@ -273,6 +290,46 @@ export interface SafetyApi {
   block(userId: string): Promise<void>;
   unblock(userId: string): Promise<void>;
   blocked(): Promise<PublicUser[]>;
+
+  /**
+   * Raises a safety alert.
+   *
+   * What this does and does not do matters more than the signature. The server
+   * records it and tells every administrator of the institution. It does not
+   * dispatch anybody: GoSaath has no control room and no position for the
+   * person who pressed it. The phone places any emergency call — the app hands
+   * a number to the dialer and the OS takes over.
+   *
+   * `rideInstanceId` is optional and a wrong one is ignored rather than
+   * refused. Somebody frightened is not in a position to pick the right
+   * journey from a list.
+   */
+  raiseAlert(input: {
+    kind: "sos" | "feelingUnsafe";
+    rideInstanceId?: string;
+    note?: string;
+  }): Promise<RaisedAlert>;
+
+  /** Served rather than compiled in, so a wrong number is not stuck in a build. */
+  emergencyContacts(): Promise<EmergencyContact[]>;
+}
+
+/**
+ * Telling somebody outside GoSaath about one journey.
+ *
+ * A link showing the day, the times, the campus, the area it starts from, the
+ * driver's first name and a masked plate — so a person who cares about you
+ * would notice if you had not arrived. It is not tracking and cannot become
+ * tracking: the product holds no position for anybody, so there is nothing
+ * live for a link to expose.
+ *
+ * The token is returned once, by `share`. Asking again gives you status only —
+ * read access to an account must not hand somebody the link itself.
+ */
+export interface TripShareApi {
+  share(rideId: string): Promise<{ url: string; expiresAt: string }>;
+  status(rideId: string): Promise<TripShareStatus | null>;
+  revoke(rideId: string): Promise<void>;
 }
 
 /**
@@ -318,6 +375,7 @@ export interface Api {
   location: LocationApi;
   notifications: NotificationsApi;
   safety: SafetyApi;
+  tripShare: TripShareApi;
   support: SupportApi;
   preferences: PreferencesApi;
 }
