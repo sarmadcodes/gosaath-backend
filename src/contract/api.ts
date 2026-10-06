@@ -245,7 +245,19 @@ export interface CommuteWeekApi {
   members(commuteId: string): Promise<CommuteMember[]>;
   skipDay(commuteId: string, day: Weekday): Promise<CommuteDay[]>;
   /** Dates the owner cannot drive, which orphans those ride instances. */
-  setUnavailable(commuteId: string, days: Weekday[]): Promise<CommuteDay[]>;
+  /**
+   * Tells passengers a day is off.
+   *
+   * `reason` is optional and is NOT shown to them: they are told the ride is
+   * not running and shown cover, which is what they can act on. It is kept
+   * against the ride for the record, and for an administrator looking at
+   * somebody who drops out every week.
+   */
+  setUnavailable(
+    commuteId: string,
+    days: Weekday[],
+    reason?: string,
+  ): Promise<CommuteDay[]>;
   replacements(commuteId: string, day: Weekday): Promise<RideListing[]>;
 }
 
