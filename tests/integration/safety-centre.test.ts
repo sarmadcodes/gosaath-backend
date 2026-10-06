@@ -83,6 +83,14 @@ async function makeUser(email: string, name: string): Promise<Person> {
   return { access: refresh.json().data.accessToken as string, id: user!._id.toString(), name };
 }
 
+/** Local midnight tomorrow, so a ride fixture is always in the future. */
+function tomorrow(): Date {
+  const when = new Date();
+  when.setDate(when.getDate() + 1);
+  when.setHours(0, 0, 0, 0);
+  return when;
+}
+
 /** A driver with a car, a commute and one scheduled ride. */
 async function makeRide(driver: Person): Promise<string> {
   const vehicle = await VehicleModel.create({
@@ -109,7 +117,11 @@ async function makeRide(driver: Person): Promise<string> {
   const ride = await RideInstanceModel.create({
     commuteId: commute._id,
     driverId: driver.id,
-    date: new Date("2026-10-05T00:00:00.000Z"),
+    // Tomorrow, not a fixed date. A share expires with the journey it
+    // describes, so a hardcoded date silently turns every share in this file
+    // into an expired one the day after it was written — which is exactly what
+    // happened.
+    date: tomorrow(),
     day: "Mon",
     arriveBy: "08:00",
     leaveCampusAt: "17:00",
