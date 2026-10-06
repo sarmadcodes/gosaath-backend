@@ -11,6 +11,7 @@ import { isoDate, startOfDay, upcomingDays } from "../../utils/dates.js";
 import { toPublicUser } from "../users/user.mapper.js";
 import { searchRides } from "../rides/ride.service.js";
 import { publish } from "../realtime/hub.js";
+import { announcePassengerSkipped } from "./notify.service.js";
 import { notifyQuietly } from "../notifications/notification.service.js";
 import type {
   CommuteDay,
@@ -222,13 +223,36 @@ export async function skipDay(
     throw new UnprocessableError("There is no upcoming ride on that day.");
   }
 
+  const isOwner = commute.ownerId.equals(new Types.ObjectId(userId));
+
   await AttendanceModel.findOneAndUpdate(
     { rideInstanceId: instance._id, userId },
-    { $set: { status: "skipped", role: commute.ownerId.equals(new Types.ObjectId(userId)) ? "driver" : "passenger" } },
+    { $set: { status: "skipped", role: isOwner ? "driver" : "passenger" } },
     { upsert: true, setDefaultsOnInsert: true },
   );
 
-  logger.info({ userId, commuteId, day }, "day skipped");
+  if (isOwner) {
+    // The driver is not coming, so the ride is not running — whatever the
+    // instance said a moment ago. Without this it stayed "scheduled" and every
+    // passenger kept seeing a ride with nobody driving it, told nothing, until
+    // they were standing at the kerb.
+    //
+    // Handled exactly as declaring the day unavailable, because that is what
+    // it is: passengers go to pending rather than cancelled, since they still
+    // want the ride and only need somebody to drive it.
+    await setUnavailable(userId, commuteId, [day]);
+  } else {
+    // The driver would otherwise wait at a pickup for somebody who is not
+    // coming, and the seat is free for that day.
+    await announcePassengerSkipped({
+      rideInstanceId: instance._id,
+      driverId: instance.driverId,
+      passengerId: userId,
+      day,
+    });
+  }
+
+  logger.info({ userId, commuteId, day, asDriver: isOwner }, "day skipped");
   return weekFor(userId, commuteId);
 }
 

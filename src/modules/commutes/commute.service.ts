@@ -16,6 +16,11 @@ import {
 } from "../../db/models/index.js";
 import { generateInstancesFor, cancelFutureInstances } from "./instance.service.js";
 import { startOfDay } from "../../utils/dates.js";
+import {
+  announceCommuteCancelled,
+  announceScheduleChanged,
+  passengersOn,
+} from "./notify.service.js";
 import type { Commute, DaySchedule } from "../../contract/types.js";
 import type { CommuteInput } from "../../contract/api.js";
 
@@ -288,11 +293,32 @@ export async function updateCommute(
   await commute.save();
 
   if (scheduleChanged) {
+    // Who was booked, read BEFORE the rebuild. Afterwards their attendance has
+    // been cleared along with the instances, and there is nobody left to tell.
+    const affected = await RideInstanceModel.find({
+      commuteId: commute._id,
+      date: { $gte: startOfDay(new Date()) },
+      status: { $ne: "cancelled" },
+    })
+      .select("_id")
+      .lean();
+
+    const riderIds = await passengersOn(affected.map((row) => row._id));
+
     // Only future days are rebuilt. Rewriting past instances would erase the
     // record of who actually travelled, and rewriting today's would cancel a
     // ride people may already be on their way to.
     await cancelFutureInstances(commute._id, "templateChanged");
     await generateInstancesFor(commute._id);
+
+    // Somebody who had a seat at 08:00 may now have one at 09:00, or none.
+    // Rebuilding their week without a word is how a passenger ends up at a
+    // kerb at the old time.
+    await announceScheduleChanged({
+      riderIds,
+      driverId: userId,
+      commuteId: commute._id.toString(),
+    });
   }
 
   return toCommute(commute);
@@ -316,6 +342,10 @@ export async function cancelCommute(
   }).select("_id");
 
   if (future.length > 0) {
+    // Read first: a moment later these rows say "cancelled" and this finds
+    // nobody to tell.
+    const riderIds = await passengersOn(future.map((i) => i._id));
+
     await AttendanceModel.updateMany(
       { rideInstanceId: { $in: future.map((i) => i._id) } },
       { $set: { status: "cancelled" } },
@@ -324,6 +354,15 @@ export async function cancelCommute(
       { _id: { $in: future.map((i) => i._id) } },
       { $set: { status: "cancelled" } },
     );
+
+    // Told after the writes and never awaited for delivery: the commute is
+    // cancelled either way, and a notification failure must not report it as
+    // still running.
+    await announceCommuteCancelled({
+      riderIds,
+      driverId: userId,
+      commuteId: commute._id.toString(),
+    });
   }
 
   logger.info({ userId, commuteId }, "commute cancelled");
