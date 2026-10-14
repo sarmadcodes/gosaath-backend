@@ -67,7 +67,6 @@ export async function updateMe(
   // change away from letting a validated-but-wider body reach the document.
   if (patch.name !== undefined) user.name = patch.name;
   if (patch.phone !== undefined) user.phone = patch.phone;
-  if (patch.photoUrl !== undefined) user.photoUrl = patch.photoUrl ?? null;
 
   if (patch.areaId !== undefined) {
     // Checked, because an unknown area silently breaks matching: the commute

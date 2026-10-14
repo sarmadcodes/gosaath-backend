@@ -45,7 +45,6 @@ export type RegisterInput = {
   email: string;
   password: string;
   phone: string;
-  photoUrl?: string | null;
   userType: UserType;
   institutionId: string;
   campusId: string;
@@ -115,7 +114,16 @@ export interface UploadsApi {
 
 export interface MeApi {
   get(): Promise<User>;
-  update(patch: Partial<User>): Promise<User>;
+  /**
+   * Everything about the account except the photo.
+   *
+   * `photoUrl` is deliberately not settable here. It is a URL the server
+   * hands out, not one a client supplies — letting an account point it
+   * anywhere turns every other member's app into a request to a stranger's
+   * server. `setPhoto` takes an upload key instead, which can only name
+   * something already in our own storage.
+   */
+  update(patch: Partial<Omit<User, "photoUrl">>): Promise<User>;
   /** Takes the key from a finished upload, or null to remove the photo. */
   setPhoto(key: string | null): Promise<User>;
   /** Submits proof for the optional verified badge, by upload key. */

@@ -170,13 +170,12 @@ describe("mass assignment", () => {
     expect(user!.role).toBe("member");
   });
 
-  it("allows the four fields a member actually owns", async () => {
+  it("allows the three fields a member actually owns", async () => {
     const otherArea = await AreaModel.findOne({ name: "Clifton" });
     const response = await api("PATCH", "/me", alice.access, {
       name: "Alice Updated",
       phone: "0321 7654321",
       areaId: otherArea!._id.toString(),
-      photoUrl: "https://example.com/photo.jpg",
     });
 
     expect(response.statusCode).toBe(200);
@@ -186,6 +185,22 @@ describe("mass assignment", () => {
     // Returns the whole updated object, which is what the client re-renders
     // from — not { ok: true }.
     expect(data.email).toBe("alice@szabist.edu.pk");
+  });
+
+  it("refuses a photo URL, which is not a member's to supply", async () => {
+    const response = await api("PATCH", "/me", alice.access, {
+      name: "Alice Updated",
+      photoUrl: "https://evil.example/api/v1/photos/x",
+    });
+
+    // An account that could point its photo anywhere would turn every other
+    // member's app into a request to a stranger's server, because an avatar
+    // is rendered to everybody they match with. Photos arrive through
+    // PUT /me/photo, which takes a key naming our own storage.
+    expect(response.statusCode).toBe(400);
+
+    const user = await UserModel.findById(alice.id);
+    expect(user!.photoUrl ?? null).toBeNull();
   });
 
   it("refuses an area that does not exist", async () => {

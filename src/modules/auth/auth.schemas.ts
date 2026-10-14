@@ -52,7 +52,10 @@ export const registerSchema = z
     email,
     password,
     phone,
-    photoUrl: z.string().url().max(2000).nullish(),
+    // No photo here. At registration it is still a file on the device, with
+    // no session to upload it with — it was being stored verbatim as a
+    // `file://` path that resolved to nothing. The app uploads it through
+    // PUT /me/photo once the account is verified.
     // "employee" is absent on purpose: the schema supports it for the future
     // organisation launch, the API does not accept it yet. The sign-up screen
     // shows it as "coming soon" and does not let it be chosen, so the two

@@ -31,7 +31,11 @@ export const updateMeSchema = z
       .optional(),
     /** Area only. There is no address, latitude or longitude to change. */
     areaId: objectId.optional(),
-    photoUrl: z.string().url().max(2000).nullish(),
+    // Photos are set through PUT /me/photo, which takes a key naming
+    // something already in our own storage. Accepting a URL here let an
+    // account point its photo at any host, which turns every other member's
+    // app into a request to a stranger's server the moment it renders their
+    // avatar — and an avatar is rendered to everyone they match with.
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, {
