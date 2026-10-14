@@ -107,11 +107,12 @@ export type ProximityEstimate = {
   /** Human phrase, e.g. "~12 min away" or "About 15 min". */
   label: string;
   /**
-   * Approximate straight-line distance between the two areas.
+   * Distance between the two areas, in kilometres.
    *
-   * Used to decide what counts as "nearby" — never rendered. Showing "2.4 km"
-   * would imply a precision this product does not have; the `label` is what
-   * the UI displays.
+   * Area to area, never person to person: the number says how far one
+   * neighbourhood is from another, which is public geography. It is rounded
+   * to one decimal because it is an estimate, and `approximate` says whether
+   * it came from a road route or from a straight line.
    */
   distanceKm?: number;
   /** Where the two routes run together, e.g. "Near Shahrah-e-Faisal". */
@@ -289,7 +290,15 @@ export type AttendanceStatus =
   | "pending"
   | "skipped"
   | "cancelled"
-  | "noDriver";
+  | "noDriver"
+  /**
+   * The same ride instance as `noDriver`, seen by the person who stood it
+   * down. Passengers are told the ride has no driver, which is their problem
+   * to solve; the owner is told they are not driving, which is a different
+   * sentence and comes with the means to undo it. One status for both read
+   * as the owner being stranded by somebody else.
+   */
+  | "notDriving";
 
 export type CommuteDay = {
   day: Weekday;
@@ -435,15 +444,34 @@ export type SeatRequest = {
   direction: CommuteDirection;
   seats: number;
   contribution: number;
-  status: "pending" | "accepted" | "declined";
+  status: "pending" | "accepted" | "declined" | "cancelled";
+  /**
+   * The days both people travel, which is the whole reason to say yes.
+   *
+   * Present before the request is answered, because deciding without it means
+   * deciding blind — the schedule above is the ride's, not the overlap.
+   */
+  matchingDays: Weekday[];
+  /**
+   * The other party's number, once the seat is accepted and not before.
+   *
+   * Absent on a pending request on purpose. Sending it early would hand a
+   * phone number to anybody willing to tap Request, which is exactly what the
+   * privacy policy promises does not happen.
+   */
+  contactPhone?: string;
 };
 
 export type NotificationKind =
   | "seatRequest"
   | "requestAccepted"
   | "requestDeclined"
+  /** A seat the driver had accepted and has now taken back. */
+  | "requestCancelled"
   | "tomorrowCommute"
   | "driverUnavailable"
+  /** A driver who stood themselves down and is driving again after all. */
+  | "driverAvailable"
   | "replacementAvailable"
   | "rideReminder"
   | "cancellation"

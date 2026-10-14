@@ -110,7 +110,7 @@ export async function matchRoutes(app: FastifyInstance): Promise<void> {
   app.post("/requests/:id/respond", async (request) => {
     const { id } = z.object({ id: objectId }).parse(request.params);
     const { action } = z
-      .object({ action: z.enum(["accept", "decline"]) })
+      .object({ action: z.enum(["accept", "decline", "cancel"]) })
       .strict()
       .parse(request.body);
 

@@ -105,6 +105,7 @@ export async function weekFor(
   );
 
   const scheduled = new Set(commute.schedule.map((entry) => entry.day));
+  const isOwner = commute.ownerId.toString() === userId;
   const result: CommuteDay[] = [];
 
   for (const date of days) {
@@ -114,11 +115,18 @@ export async function weekFor(
     // The instance's own status wins where it is exceptional — a cancelled or
     // driverless day is that for everyone. Otherwise this person's attendance
     // decides, so one passenger skipping does not change what others see.
+    //
+    // The one exception is the owner on a driverless day. "No driver" is true
+    // of the ride but absurd as a message to the person who is the driver and
+    // who stood it down a moment ago; they get `notDriving`, which is the
+    // same fact said from their side and carries an undo.
     const status =
       instance.status === "cancelled"
         ? "cancelled"
         : instance.status === "noDriver"
-          ? "noDriver"
+          ? isOwner
+            ? "notDriving"
+            : "noDriver"
           : (statusByInstance.get(instance._id.toString()) ?? "confirmed");
 
     result.push({
@@ -383,6 +391,122 @@ export async function setUnavailable(
     "driver unavailable",
   );
   return weekFor(userId, commuteId);
+}
+
+/**
+ * Puts a day the owner stood down back on.
+ *
+ * The counterpart to `setUnavailable`, and the reason that one is safe to
+ * use: a driver who marks Tuesday off by mistake, or whose plans change back,
+ * had no way to undo it and nothing to do but cancel the whole commute.
+ *
+ * Only days this commute actually stood down are touched. An instance that
+ * is `cancelled`, or that was never driverless, is left exactly as it is —
+ * restoring those would resurrect rides nobody meant to bring back.
+ */
+export async function setAvailable(
+  userId: string,
+  commuteId: string,
+  days: Weekday[],
+): Promise<CommuteDay[]> {
+  const commute = await ownedCommute(userId, commuteId);
+
+  // Matched on `noDriver` rather than on the day alone, so this can only ever
+  // undo the thing it is the undo for.
+  const soonest = await RideInstanceModel.aggregate<{ _id: string; instanceId: unknown }>([
+    {
+      $match: {
+        commuteId: commute._id,
+        day: { $in: days },
+        status: "noDriver",
+        date: { $gte: startOfDay(new Date()) },
+      },
+    },
+    { $sort: { date: 1 } },
+    { $group: { _id: "$day", instanceId: { $first: "$_id" } } },
+  ]);
+
+  const affected = soonest.map((row) => row.instanceId);
+
+  if (affected.length > 0) {
+    await RideInstanceModel.updateMany(
+      { _id: { $in: affected } },
+      { $set: { status: "scheduled" }, $unset: { unavailableReason: "" } },
+    );
+
+    // Back to confirmed, mirroring the move to pending on the way out. Only
+    // the passengers that move was applied to: somebody who skipped this day
+    // themselves stays skipped, because that was their decision and not the
+    // driver's to reverse.
+    await AttendanceModel.updateMany(
+      {
+        rideInstanceId: { $in: affected },
+        role: "passenger",
+        status: "pending",
+      },
+      { $set: { status: "confirmed" } },
+    );
+
+    await notifyPassengersDriving(affected, userId, days, commute._id);
+  }
+
+  logger.info(
+    { userId, commuteId, days, instances: affected.length },
+    "driver available again",
+  );
+  return weekFor(userId, commuteId);
+}
+
+/**
+ * Tells everyone booked on these rides that the driver is back.
+ *
+ * Worth as much as the message that they had dropped out: a passenger who
+ * found cover needs to know they no longer have to, and one who did not needs
+ * to stop worrying about the morning.
+ */
+async function notifyPassengersDriving(
+  instanceIds: unknown[],
+  driverId: string,
+  days: Weekday[],
+  commuteId: unknown,
+): Promise<void> {
+  const riders = await AttendanceModel.find({
+    rideInstanceId: { $in: instanceIds },
+    role: "passenger",
+  })
+    .select("userId")
+    .lean();
+
+  const uniqueRiders = [...new Set(riders.map((r) => r.userId.toString()))];
+  if (uniqueRiders.length === 0) return;
+
+  const driver = await UserModel.findById(driverId).select("name").lean();
+  const firstName = driver?.name.trim().split(/\s+/)[0] ?? "Your driver";
+  const when = days.join(", ");
+
+  await Promise.all(
+    uniqueRiders.map((riderId) =>
+      notifyQuietly({
+        userId: riderId,
+        kind: "driverAvailable",
+        title: "Your driver is back on",
+        body: `${firstName} is driving on ${when} after all. Your seat is confirmed.`,
+      }),
+    ),
+  );
+
+  for (const riderId of uniqueRiders) {
+    for (const instanceId of instanceIds) {
+      publish(
+        { kind: "user", userId: riderId },
+        {
+          type: "driverAvailable",
+          rideId: String(instanceId),
+          commuteId: String(commuteId),
+        },
+      );
+    }
+  }
 }
 
 /**

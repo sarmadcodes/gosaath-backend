@@ -48,6 +48,7 @@ export type RealtimeEvent =
   | { type: "ride.seatsChanged"; rideId: string; seatsLeft: number }
   | { type: "commute.updated"; commuteId: string }
   | { type: "driverUnavailable"; rideId: string; commuteId: string }
+  | { type: "driverAvailable"; rideId: string; commuteId: string }
   | { type: "replacementAvailable"; commuteId: string; options: number }
 
   // --- Verification and safety -------------------------------------------

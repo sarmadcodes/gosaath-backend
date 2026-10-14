@@ -196,9 +196,14 @@ export interface RidesApi {
   incomingRequests(): Promise<SeatRequest[]>;
   /** Requests you have sent to other people, awaiting their reply. */
   sentRequests(): Promise<SeatRequest[]>;
+  /**
+   * `cancel` takes back a seat already accepted, which is the only answer
+   * that applies to a request already answered. The passenger is told, their
+   * attendance row goes, and the seat returns to the ride.
+   */
   respondToRequest(
     requestId: string,
-    action: "accept" | "decline",
+    action: "accept" | "decline" | "cancel",
   ): Promise<SeatRequest>;
 }
 
@@ -258,6 +263,13 @@ export interface CommuteWeekApi {
     days: Weekday[],
     reason?: string,
   ): Promise<CommuteDay[]>;
+  /**
+   * The undo for the above, and the reason it is safe to use.
+   *
+   * Only days this commute actually stood down are affected, so calling it on
+   * an ordinary day does nothing rather than resurrecting something.
+   */
+  setAvailable(commuteId: string, days: Weekday[]): Promise<CommuteDay[]>;
   replacements(commuteId: string, day: Weekday): Promise<RideListing[]>;
 }
 

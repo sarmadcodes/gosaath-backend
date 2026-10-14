@@ -210,12 +210,16 @@ export async function searchRides(
 ): Promise<RideListing[]> {
   const context = await contextFor(userId, params);
 
-  // Restricted to commutes at the caller's own campus before anything else.
+  // Restricted to commutes at the caller's own campus before anything else,
+  // and never the caller's own. A driver browsing rides was being shown the
+  // seats they are themselves offering, which reads as somebody else having
+  // offered them a lift in their own car.
   const eligible = await CommuteModel.find({
     institutionId: context.institutionId,
     campusId: context.campusId,
     status: "active",
     intent: { $in: ["offer", "both"] },
+    ownerId: { $ne: new Types.ObjectId(userId) },
     ...(params.womenOnly !== undefined ? { womenOnly: params.womenOnly } : {}),
   })
     .select("_id")
@@ -289,6 +293,7 @@ export async function nearbyRides(
     status: "active",
     intent: { $in: ["offer", "both"] },
     originAreaId: { $in: nearbyAreaIds },
+    ownerId: { $ne: new Types.ObjectId(userId) },
   })
     .select("_id")
     .lean();

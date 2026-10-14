@@ -134,4 +134,16 @@ export async function commuteRoutes(app: FastifyInstance): Promise<void> {
       data: await week.setUnavailable(requireUser(request).id, id, days, reason),
     };
   });
+
+  /** The undo for the above. No reason: changing your mind needs no excuse. */
+  app.post("/commutes/:id/available", async (request) => {
+    const { id } = z.object({ id: objectId }).parse(request.params);
+    const { days } = z
+      .object({ days: z.array(weekday).min(1).max(7) })
+      .strict()
+      .parse(request.body);
+    return {
+      data: await week.setAvailable(requireUser(request).id, id, days),
+    };
+  });
 }

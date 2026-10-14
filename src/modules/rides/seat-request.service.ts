@@ -16,7 +16,7 @@ import {
   SeatRequestModel,
   UserModel,
 } from "../../db/models/index.js";
-import { toPublicUser } from "../users/user.mapper.js";
+import { contactPhoneFor, toPublicUser } from "../users/user.mapper.js";
 import { notifyQuietly } from "../notifications/notification.service.js";
 import { publishAll } from "../realtime/hub.js";
 import type {
@@ -205,7 +205,7 @@ export async function requestSeat(
 export async function respondToRequest(
   driverId: string,
   requestId: string,
-  action: "accept" | "decline",
+  action: "accept" | "decline" | "cancel",
 ): Promise<SeatRequest> {
   // Scoped to the driver in the query itself, so another person's request
   // cannot match at all.
@@ -215,6 +215,12 @@ export async function respondToRequest(
   }).lean();
 
   if (!request) throw new NotFoundError("That request was not found.");
+
+  // Taking back an acceptance is the one answer that applies to a request
+  // already answered, so it is handled before the pending check.
+  if (action === "cancel") {
+    return cancelAcceptance(driverId, request as RequestRow);
+  }
 
   if (request.status !== "pending") {
     throw new ConflictError("That request has already been answered.");
@@ -381,6 +387,94 @@ async function acceptRequest(
 }
 
 /**
+ * Takes back a seat the driver already accepted.
+ *
+ * Plans change after a yes, and without this the only way out was for the
+ * driver to cancel the whole day on everybody — a far blunter instrument
+ * than the situation usually calls for.
+ *
+ * The seat, the attendance row and the request status move together, so the
+ * count can never drift from the rows that justify it. The passenger is told
+ * plainly: finding out at the kerb is the failure this exists to prevent.
+ */
+async function cancelAcceptance(
+  driverId: string,
+  request: RequestRow,
+): Promise<SeatRequest> {
+  if (request.status !== "accepted") {
+    throw new ConflictError("That request is not an accepted one.");
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    let cancelled: RequestRow | null = null;
+
+    await session.withTransaction(async () => {
+      const updated = await SeatRequestModel.findOneAndUpdate(
+        // Guarded on `accepted`, so two taps cannot both give the seat back.
+        { _id: request._id, status: "accepted" },
+        { $set: { status: "cancelled", respondedAt: new Date() } },
+        { new: true, session },
+      ).lean();
+
+      if (!updated) {
+        throw new ConflictError("That request has already been answered.");
+      }
+
+      // Floors at zero by the filter rather than by arithmetic: a negative
+      // count would make a full ride look bookable.
+      await RideInstanceModel.updateOne(
+        { _id: request.rideInstanceId, seatsTaken: { $gte: request.seats } },
+        { $inc: { seatsTaken: -request.seats } },
+        { session },
+      );
+
+      // Removed rather than marked cancelled. The passenger is no longer on
+      // this ride in any sense, and a lingering row would keep them in the
+      // group list and on the driver's manifest.
+      await AttendanceModel.deleteOne(
+        { rideInstanceId: request.rideInstanceId, userId: request.requesterId },
+        { session },
+      );
+
+      cancelled = updated as RequestRow;
+    });
+
+    logger.info(
+      { driverId, requestId: request._id.toString(), seats: request.seats },
+      "seat request cancelled after acceptance",
+    );
+
+    const driver = await UserModel.findById(driverId).select("name").lean();
+    await notifyQuietly({
+      userId: request.requesterId,
+      kind: "requestCancelled",
+      title: "Your seat was cancelled",
+      body: `${firstNameOf(driver?.name)} can no longer take you. There may be other rides.`,
+      payload: { requestId: request._id.toString() },
+    });
+
+    publishAll(
+      [
+        { kind: "user", userId: request.requesterId.toString() },
+        { kind: "user", userId: driverId },
+      ],
+      {
+        type: "seatRequest.cancelled",
+        requestId: request._id.toString(),
+        rideId: request.rideInstanceId.toString(),
+      },
+    );
+
+    const [mapped] = await toSeatRequests([cancelled!], "incoming");
+    return mapped!;
+  } finally {
+    await session.endSession();
+  }
+}
+
+/**
  * Releases seats held by an accepted request.
  *
  * Used when a ride stops running. Floors at zero rather than trusting the
@@ -431,6 +525,19 @@ async function toSeatRequests(
     .select("schedule direction contribution campusId originAreaId ownerId")
     .lean();
 
+  // The requester's own commute, which is what the ride is being compared
+  // against. Without it the driver is shown the ride's schedule and asked to
+  // work out the overlap in their head.
+  const requesterCommutes = await CommuteModel.find({
+    ownerId: { $in: rows.map((row) => row.requesterId) },
+  })
+    .select("ownerId schedule")
+    .lean();
+
+  const requesterCommuteByOwner = new Map(
+    requesterCommutes.map((c) => [c.ownerId.toString(), c]),
+  );
+
   const [areas, campuses] = await Promise.all([
     AreaModel.find({
       _id: {
@@ -471,6 +578,14 @@ async function toSeatRequests(
     const areaId =
       direction === "incoming" ? other.areaId : commute.originAreaId;
 
+    // Days they both travel. Computed against the ride's own schedule, so it
+    // means the same thing to whichever side is reading it.
+    const rideDays = new Set(commute.schedule.map((entry) => entry.day));
+    const theirCommute = requesterCommuteByOwner.get(row.requesterId.toString());
+    const matchingDays = (theirCommute?.schedule ?? [])
+      .map((entry) => entry.day as Weekday)
+      .filter((day) => rideDays.has(day));
+
     results.push({
       id: row._id.toString(),
       user: toPublicUser(other),
@@ -485,6 +600,11 @@ async function toSeatRequests(
       seats: row.seats,
       contribution: commute.contribution ?? 0,
       status: row.status as SeatRequest["status"],
+      matchingDays,
+      // The gate, in one place. Accepting is what earns the number — before
+      // that there is nothing here to leak, and afterwards both sides get the
+      // other's, because a lift needs two people who can reach each other.
+      ...(row.status === "accepted" ? { contactPhone: contactPhoneFor(other) } : {}),
     });
   }
 
