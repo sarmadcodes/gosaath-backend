@@ -1,4 +1,5 @@
 import { distanceKm, roundKm } from "../../utils/geo.js";
+import { roadEstimate } from "./routing.service.js";
 import { escapeRegExp } from "../../utils/text.js";
 import { NotFoundError } from "../../utils/errors.js";
 import {
@@ -99,12 +100,17 @@ export async function recentAreas(userId: string): Promise<AreaSuggestion[]> {
 }
 
 /**
- * How close two areas are, as a phrase.
+ * How close two areas are, as a phrase and a figure.
  *
- * `label` is what the client renders. `distanceKm` is carried for the nearby
- * filter and is never displayed: "2.4 km" implies a precision this product
- * does not have and is not going to have, because it does not know where
- * anybody actually lives.
+ * Synchronous and straight-line on purpose. This is the version the matching
+ * path uses, where every candidate area is compared and a network call per
+ * candidate would be both slow and billable. `proximityFor` is the one that
+ * asks a routing service, and it is only ever called about a single pair
+ * somebody is looking at.
+ *
+ * The kilometres are area to area, which is public geography about two
+ * neighbourhoods rather than about either person — the finest thing this
+ * product knows. `approximate` says which kind of figure it is.
  */
 export function proximityBetween(
   from: AreaLike,
@@ -114,13 +120,52 @@ export function proximityBetween(
     return { label: "Nearby", approximate: true };
   }
 
-  const km = distanceKm(from.centroid, to.centroid);
+  const km = roundKm(distanceKm(from.centroid, to.centroid));
   const minutes = Math.max(5, Math.round((km * MINUTES_PER_KM) / 5) * 5);
 
   return {
-    label: km < 1.5 ? "Same part of town" : `~${minutes} min away`,
-    distanceKm: roundKm(km),
+    label: labelFor(km, minutes, true),
+    distanceKm: km,
     approximate: true,
+  };
+}
+
+/**
+ * One phrase, so the two paths below cannot drift apart.
+ *
+ * Under a kilometre and a half the distance is noise and the honest answer is
+ * that they are in the same place. Beyond that both numbers are given,
+ * because "how far" and "how long" are different questions and in Karachi
+ * they have very different answers.
+ */
+function labelFor(km: number, minutes: number, approximate: boolean): string {
+  if (km < 1.5) return "Same part of town";
+  const tilde = approximate ? "~" : "";
+  return `${km} km · ${tilde}${minutes} min`;
+}
+
+/**
+ * The same estimate, allowed to ask a routing service first.
+ *
+ * Used where somebody is looking at one specific pair — a match they opened,
+ * a ride they are considering. Falls back to the straight line whenever
+ * routing is unconfigured, slow or unhappy, so the figure is always present
+ * and `approximate` is the only thing that changes.
+ */
+export async function proximityFor(
+  from: AreaLike,
+  to: AreaLike,
+): Promise<ProximityEstimate> {
+  const fallback = proximityBetween(from, to);
+  if (!from.centroid || !to.centroid) return fallback;
+
+  const road = await roadEstimate(from.centroid, to.centroid);
+  if (!road) return fallback;
+
+  return {
+    label: labelFor(road.km, road.minutes, false),
+    distanceKm: road.km,
+    approximate: false,
   };
 }
 
@@ -134,7 +179,7 @@ export async function proximity(
   ]);
 
   if (!from || !to) throw new NotFoundError("That area was not found.");
-  return proximityBetween(from, to);
+  return proximityFor(from, to);
 }
 
 /**
@@ -160,7 +205,7 @@ export async function routePreview(
     : null;
 
   const estimate = destination
-    ? proximityBetween(origin, destination)
+    ? await proximityFor(origin, destination)
     : { label: "Nearby", approximate: true as const };
 
   return {

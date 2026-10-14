@@ -168,6 +168,26 @@ const schema = z
     EMAIL_REPLY_TO: optionalSecret(1),
     /** Hard ceiling on the provider call. Registration waits on this. */
     EMAIL_TIMEOUT_MS: z.coerce.number().int().min(1000).max(30_000).default(8_000),
+
+    /**
+     * Google Routes API key, for road distance and traffic-aware times.
+     *
+     * Optional, and the product works without it: every estimate falls back
+     * to a straight line between area centroids, which is what shipped
+     * before this existed. Set it and the same figures become road distance
+     * and a real duration.
+     *
+     * Server-side only. It must never reach the app bundle, where it would
+     * be extractable from any installed copy — restrict it by IP to this
+     * server, not by HTTP referrer.
+     */
+    GOOGLE_MAPS_API_KEY: optionalSecret(1),
+    /**
+     * Hard ceiling on the routing call. A screen waits on this, so it is
+     * short: a slow answer is worse than the straight-line estimate, which
+     * is always available and costs nothing.
+     */
+    ROUTING_TIMEOUT_MS: z.coerce.number().int().min(500).max(10_000).default(2_500),
   })
   .superRefine((value, ctx) => {
     // A provider selected without its credential fails at the first send,
