@@ -27,7 +27,8 @@
     "db:bootstrap": "tsx scripts/bootstrap-super-admin.ts",
     "admin:code": "tsx scripts/admin-code.ts",
     "db:review": "tsx scripts/seed-review-account.ts",
-    "db:review:remove": "tsx scripts/remove-review-account.ts"
+    "db:review:remove": "tsx scripts/remove-review-account.ts",
+    "db:account:remove": "tsx scripts/remove-account.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1142.0",
