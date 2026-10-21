@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # The contract is checked against the app's main branch: drift there is
+      # exactly what this job exists to catch.
+      GOSAATH_APP_DIR: ${{ github.workspace }}/gosaath
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: gosaath-backend
+
+      # The app repo may be private, in which case GITHUB_TOKEN cannot read
+      # it; add a read-only token as GOSAATH_REPO_TOKEN.
+      - uses: actions/checkout@v4
+        with:
+          repository: sarmadcodes/gosaath
+          ref: main
+          path: gosaath
+          token: ${{ secrets.GOSAATH_REPO_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gosaath-backend/package-lock.json
+
+      - name: Install
+        working-directory: gosaath-backend
+        run: npm ci
+
+      # contract:check + typecheck + tests (in-memory MongoDB) + build.
+      # No secrets: tests/setup forces a throwaway database.
+      - name: Verify
+        working-directory: gosaath-backend
+        run: npm run verify
