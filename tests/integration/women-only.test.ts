@@ -144,10 +144,15 @@ async function nextRideOf(person: Person): Promise<string> {
   return instance!._id.toString();
 }
 
+type Listing = { driver: { id: string }; womenOnly: boolean };
+
+/** One listing per dated ride, so a driver appears once per upcoming day. */
+const driversIn = (rides: Listing[]) => [...new Set(rides.map((r) => r.driver.id))];
+
 async function searchIds(person: Person, query = ""): Promise<string[]> {
   const response = await api("GET", `/rides${query}`, person.access);
   expect(response.statusCode).toBe(200);
-  return (response.json().data as Array<{ driver: { id: string } }>).map((r) => r.driver.id);
+  return driversIn(response.json().data as Listing[]);
 }
 
 beforeAll(async () => {
@@ -205,7 +210,7 @@ describe("declaring a gender", () => {
     await offer(woman, false);
     const response = await api("GET", "/rides", man.access);
     expect(response.statusCode).toBe(200);
-    expect(response.json().data).toHaveLength(1);
+    expect(driversIn(response.json().data as Listing[])).toEqual([woman.id]);
     expect(response.body).not.toContain("gender");
   });
 });
@@ -249,9 +254,9 @@ describe("seeing women-only rides", () => {
 
   it("shows them to declared women, marked as women-only", async () => {
     const response = await api("GET", "/rides", otherWoman.access);
-    const rides = response.json().data as Array<{ driver: { id: string }; womenOnly: boolean }>;
-    expect(rides.map((r) => r.driver.id)).toEqual([woman.id]);
-    expect(rides[0]!.womenOnly).toBe(true);
+    const rides = response.json().data as Listing[];
+    expect(driversIn(rides)).toEqual([woman.id]);
+    expect(rides.every((r) => r.womenOnly)).toBe(true);
   });
 
   it("hides them from men and from people who have not said, in search", async () => {
@@ -289,9 +294,9 @@ describe("seeing women-only rides", () => {
     );
 
     const response = await api("GET", "/rides", unstated.access);
-    const rides = response.json().data as Array<{ driver: { id: string }; womenOnly: boolean }>;
-    expect(rides.map((r) => r.driver.id)).toEqual([man.id]);
-    expect(rides[0]!.womenOnly).toBe(false);
+    const rides = response.json().data as Listing[];
+    expect(driversIn(rides)).toEqual([man.id]);
+    expect(rides.some((r) => r.womenOnly)).toBe(false);
   });
 
   it("stops applying when the owner changes their declaration", async () => {
