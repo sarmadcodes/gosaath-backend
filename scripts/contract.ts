@@ -12,11 +12,28 @@ import { fileURLToPath } from "node:url";
  *
  *   npm run contract:check   verify — non-zero exit on drift, for CI
  *   npm run contract:sync    re-copy from the app
+ *
+ * The app is found at GOSAATH_APP_DIR when that is set, otherwise beside this
+ * repo as `gosaath` or `GoSaath`. Spelled out rather than guessed further:
+ * on a case-sensitive filesystem only the exact name matches, and checking a
+ * wrong directory is worse than failing.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
 const backendRoot = resolve(here, "..");
-const appRoot = resolve(backendRoot, "..", "GoSaath", "src");
+
+function findAppRoot(): string {
+  const explicit = process.env["GOSAATH_APP_DIR"];
+  if (explicit) return resolve(explicit, "src");
+  for (const name of ["gosaath", "GoSaath"]) {
+    const candidate = resolve(backendRoot, "..", name, "src");
+    if (existsSync(candidate)) return candidate;
+  }
+  // Reported as missing below, never skipped.
+  return resolve(backendRoot, "..", "gosaath", "src");
+}
+
+const appRoot = findAppRoot();
 
 const FILES = [
   { from: "data/types.ts", to: "types.ts" },
@@ -57,7 +74,7 @@ for (const file of FILES) {
 
   if (want === null) {
     process.stderr.write(
-      `  MISSING SOURCE  GoSaath/src/${file.from} not found\n`,
+      `  MISSING SOURCE  ${resolve(appRoot, file.from)} not found\n`,
     );
     missing++;
     continue;
@@ -81,8 +98,9 @@ for (const file of FILES) {
 
 if (missing > 0) {
   process.stderr.write(
-    "\nThe mobile app was not found beside this repo. Expected it at " +
-      `${appRoot}\n`,
+    "\nThe mobile app was not found. Expected it at " +
+      `${appRoot}\n` +
+      "Clone it beside this repo as `gosaath`, or set GOSAATH_APP_DIR.\n",
   );
   process.exit(1);
 }
