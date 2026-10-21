@@ -1,5 +1,6 @@
 import { env } from "../../config/env.js";
 import type { PublicUser, User } from "../../contract/types.js";
+import { genderOf } from "./gender.js";
 
 /**
  * The privacy boundary, in code.
@@ -20,6 +21,7 @@ type UserLike = {
   campusId: { toString(): string };
   areaId: { toString(): string };
   badgeStatus: string;
+  gender?: string | null;
   additionalInstitutionIds?: Array<{ toString(): string }>;
   role?: string | null;
 };
@@ -42,6 +44,7 @@ export function toUser(doc: UserLike): User {
     campusId: doc.campusId.toString(),
     areaId: doc.areaId.toString(),
     badgeStatus: doc.badgeStatus as User["badgeStatus"],
+    gender: genderOf(doc),
     additionalInstitutionIds: (doc.additionalInstitutionIds ?? []).map((id) =>
       id.toString(),
     ),

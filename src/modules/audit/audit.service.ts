@@ -25,6 +25,7 @@ export type AuditAction =
   | "member.suspended"
   | "member.restored"
   | "member.phoneRevealed"
+  | "member.genderCorrected"
   | "verification.approved"
   | "verification.rejected"
   | "report.actioned"

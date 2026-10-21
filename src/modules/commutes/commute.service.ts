@@ -1,6 +1,7 @@
 import { Types } from "mongoose";
 import { logger } from "../../utils/logger.js";
 import {
+  AuthorizationError,
   BusinessRuleError,
   NotFoundError,
   UnprocessableError,
@@ -16,6 +17,7 @@ import {
 } from "../../db/models/index.js";
 import { generateInstancesFor, cancelFutureInstances } from "./instance.service.js";
 import { startOfDay } from "../../utils/dates.js";
+import { isWoman, WOMEN_ONLY_REFUSAL } from "../users/gender.js";
 import {
   announceCommuteCancelled,
   announceScheduleChanged,
@@ -176,6 +178,10 @@ export async function createCommute(
     input,
   );
 
+  if (input.womenOnly && !isWoman(user)) {
+    throw new AuthorizationError(WOMEN_ONLY_REFUSAL);
+  }
+
   const commute = await CommuteModel.create({
     ownerId: user._id,
     intent: input.intent,
@@ -273,7 +279,38 @@ export async function updateCommute(
     }
   }
 
-  const { campus, area, vehicleId, offering } = await resolveContext(userId, merged);
+  const { user, campus, area, vehicleId, offering } = await resolveContext(userId, merged);
+
+  // Checked only when the flag is being turned on. A flag already stored on
+  // somebody who is not a declared woman has no effect (see gender.ts), so
+  // refusing every other edit over it would only lock them out of their own
+  // commute.
+  if (patch.womenOnly === true && !isWoman(user)) {
+    throw new AuthorizationError(WOMEN_ONLY_REFUSAL);
+  }
+
+  // Turning the restriction on cannot reach back over seats already given.
+  // Refused while anyone holds an upcoming seat, rather than checking each
+  // passenger: naming who blocks it would tell the driver a passenger's
+  // declared gender, and cancelling them silently is not this toggle's call.
+  if (patch.womenOnly === true && !commute.womenOnly) {
+    const seated = await AttendanceModel.countDocuments({
+      rideInstanceId: {
+        $in: await RideInstanceModel.find({
+          commuteId: commute._id,
+          date: { $gte: startOfDay(new Date()) },
+          status: { $ne: "cancelled" },
+        }).distinct("_id"),
+      },
+      role: "passenger",
+      status: "confirmed",
+    });
+    if (seated > 0) {
+      throw new BusinessRuleError(
+        "People already have seats on this commute. Women-only can be turned on before anyone is booked, or after those seats are cancelled.",
+      );
+    }
+  }
 
   const scheduleChanged =
     patch.schedule !== undefined &&

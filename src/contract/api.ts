@@ -17,6 +17,7 @@ import type {
   CommuteMatch,
   CommuteMember,
   DaySchedule,
+  Gender,
   Institution,
   PublicUser,
   InstitutionRequest,
@@ -49,6 +50,7 @@ export type RegisterInput = {
   institutionId: string;
   campusId: string;
   areaId: string;
+  gender?: Gender;
 };
 
 export type AuthSession = {

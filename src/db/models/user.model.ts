@@ -36,6 +36,17 @@ const userSchema = new Schema(
       required: true,
     },
 
+    /**
+     * Self-declared and optional; absent reads as "undisclosed". It exists to
+     * decide who may create, see and join women-only rides, and is never part
+     * of what another member is shown. See modules/users/gender.ts.
+     */
+    gender: {
+      type: String,
+      enum: ["woman", "man", "undisclosed"],
+      default: "undisclosed",
+    },
+
     institutionId: { type: Schema.Types.ObjectId, ref: "Institution", required: true },
     campusId: { type: Schema.Types.ObjectId, ref: "Campus", required: true },
 

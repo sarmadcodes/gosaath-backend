@@ -64,6 +64,7 @@ export const registerSchema = z
     institutionId: objectId,
     campusId: objectId,
     areaId: objectId,
+    gender: z.enum(["woman", "man", "undisclosed"]).optional(),
   })
   .strict();
 

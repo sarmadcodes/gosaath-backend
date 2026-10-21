@@ -277,18 +277,18 @@ describe("preferences", () => {
   });
 
   it("writes through and is idempotent", async () => {
-    const first = await api("PATCH", "/preferences", alice.access, { womenOnly: true });
-    const second = await api("PATCH", "/preferences", alice.access, { womenOnly: true });
+    const first = await api("PATCH", "/preferences", alice.access, { verifiedOnly: true });
+    const second = await api("PATCH", "/preferences", alice.access, { verifiedOnly: true });
 
-    expect(first.json().data.womenOnly).toBe(true);
-    expect(second.json().data.womenOnly).toBe(true);
+    expect(first.json().data.verifiedOnly).toBe(true);
+    expect(second.json().data.verifiedOnly).toBe(true);
     expect(await PreferencesModel.countDocuments({ userId: alice.id })).toBe(1);
   });
 
   it("keeps two people's preferences apart", async () => {
-    await api("PATCH", "/preferences", alice.access, { womenOnly: true });
+    await api("PATCH", "/preferences", alice.access, { verifiedOnly: true });
     const bobs = await api("GET", "/preferences", bob.access);
-    expect(bobs.json().data.womenOnly).toBe(false);
+    expect(bobs.json().data.verifiedOnly).toBe(false);
   });
 
   it("rejects an unknown preference key", async () => {

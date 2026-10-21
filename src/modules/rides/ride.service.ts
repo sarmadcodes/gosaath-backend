@@ -16,6 +16,7 @@ import { distanceKm } from "../../utils/geo.js";
 import { minutesFromTime } from "../../utils/dates.js";
 import type { RideListing, VehicleType, Weekday } from "../../contract/types.js";
 import type { RideSearch } from "../../contract/api.js";
+import { isWoman, womenOnlyInEffect } from "../users/gender.js";
 
 /**
  * Ride listings.
@@ -36,6 +37,8 @@ type Context = {
   institutionId: Types.ObjectId;
   campusId: Types.ObjectId;
   originAreaId: Types.ObjectId | null;
+  /** Whether the caller may see and join women-only rides. */
+  viewerIsWoman: boolean;
   hidden: Types.ObjectId[];
 };
 
@@ -74,6 +77,7 @@ async function contextFor(userId: string, params: RideSearch): Promise<Context> 
     institutionId: user.institutionId,
     campusId: user.campusId,
     originAreaId: commute?.originAreaId ?? null,
+    viewerIsWoman: isWoman(user),
     // Both directions, so a blocked person cannot see the blocker either.
     hidden: [
       ...blockedByMe.map((row) => row.blockedId),
@@ -140,6 +144,12 @@ async function buildListings(
     const driver = userById.get(instance.driverId.toString());
     if (!commute || !driver) continue;
 
+    // The driver is always the commute's owner, so their declaration decides
+    // whether the flag means anything. A women-only ride is not shown to
+    // anybody else at all — not greyed out, not "ask anyway".
+    const womenOnly = womenOnlyInEffect(commute, isWoman(driver));
+    if (womenOnly && !context.viewerIsWoman) continue;
+
     const vehicle = commute.vehicleId
       ? vehicleById.get(commute.vehicleId.toString())
       : undefined;
@@ -174,7 +184,7 @@ async function buildListings(
       direction: commute.direction as RideListing["direction"],
       seatsAvailable: Math.max(0, instance.seatsOffered - instance.seatsTaken),
       contribution: commute.contribution ?? 0,
-      womenOnly: commute.womenOnly,
+      womenOnly,
       // Always true: every result is filtered to the caller's own campus
       // before it gets here, and the card drops the redundant destination.
       sameCampus: true,
@@ -220,7 +230,6 @@ export async function searchRides(
     status: "active",
     intent: { $in: ["offer", "both"] },
     ownerId: { $ne: new Types.ObjectId(userId) },
-    ...(params.womenOnly !== undefined ? { womenOnly: params.womenOnly } : {}),
   })
     .select("_id")
     .lean();
@@ -248,9 +257,13 @@ export async function searchRides(
 
   const listings = await buildListings(context, timely);
 
-  return params.vehicleType
-    ? listings.filter((listing) => listing.vehicleType === params.vehicleType)
-    : listings;
+  // Filtered on the value in effect, not the stored flag: a flag nobody can
+  // honour must not put an ordinary ride under "women only".
+  return listings.filter(
+    (listing) =>
+      (!params.vehicleType || listing.vehicleType === params.vehicleType) &&
+      (params.womenOnly === undefined || listing.womenOnly === params.womenOnly),
+  );
 }
 
 /**

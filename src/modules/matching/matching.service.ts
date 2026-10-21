@@ -12,6 +12,7 @@ import {
   UserModel,
 } from "../../db/models/index.js";
 import { toPublicUser } from "../users/user.mapper.js";
+import { womenAmong, womenOnlyInEffect } from "../users/gender.js";
 import { acceptedContactIds } from "../users/contact.service.js";
 import { proximityBetween } from "../location/location.service.js";
 import type {
@@ -188,28 +189,26 @@ async function findCandidates(userId: string): Promise<{
     .limit(200)
     .lean();
 
+  const women = await womenAmong([mine.ownerId, ...rows.map((row) => row.ownerId)]);
+  const iAmWoman = women.has(mine.ownerId.toString());
+
   const candidates: Candidate[] = [];
 
   for (const row of rows) {
     /**
-     * womenOnly, as far as it can currently be honoured.
+     * Women-only, in both directions.
      *
-     * INCOMPLETE, AND KNOWN TO BE. The product has a women-only flag on the
-     * commute but the system stores no gender for anybody — not on User, not
-     * in the contract, nowhere. So this cannot do what the feature name
-     * promises. What it does instead is pair the flag symmetrically: a
-     * women-only commute only ever meets another women-only commute.
+     * A women-only commute only meets declared women, and a woman's own
+     * women-only commute only meets other declared women. Two women where one
+     * has not set the flag still match: the flag narrows who may join the
+     * person who set it, not who that person may join.
      *
-     * That is the safest behaviour available without gender, and it is
-     * deliberately conservative — it under-matches rather than over-matches.
-     * It is still not a guarantee, and it must not be presented to users as
-     * one until there is something real to check against.
-     *
-     * Resolving this is a product decision, not a technical one: collecting
-     * gender changes what this app holds about people, which is a choice the
-     * owner has to make deliberately.
+     * The flag counts only when its owner is a declared woman — see
+     * users/gender.ts for why a stale flag reads as an ordinary commute.
      */
-    if (mine.womenOnly !== row.womenOnly) continue;
+    const theyAreWoman = women.has(row.ownerId.toString());
+    if (womenOnlyInEffect(mine, iAmWoman) && !theyAreWoman) continue;
+    if (womenOnlyInEffect(row, theyAreWoman) && !iAmWoman) continue;
 
     const { sharedDays, matchingDays } = overlappingDays(
       mine.schedule,

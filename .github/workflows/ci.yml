@@ -27,13 +27,27 @@ jobs:
           persist-credentials: false
           path: gosaath-backend
 
+      # A contract change lands in both repos on a branch of the same name.
+      # Check against that branch while it exists, so neither PR is red until
+      # the other merges; everything else is checked against main.
+      - name: Pick the app revision
+        id: app
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          if git ls-remote --exit-code --heads https://github.com/sarmadcodes/gosaath "refs/heads/$BRANCH" >/dev/null; then
+            echo "ref=$BRANCH" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+          fi
+
       # The app repo may be private, in which case GITHUB_TOKEN cannot read
       # it; add a read-only token as GOSAATH_REPO_TOKEN.
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
           repository: sarmadcodes/gosaath
-          ref: main
+          ref: ${{ steps.app.outputs.ref }}
           path: gosaath
           token: ${{ secrets.GOSAATH_REPO_TOKEN || github.token }}
 
