@@ -137,6 +137,13 @@ export type RoutePreview = {
 export type UserType = "student" | "teacher" | "employee";
 
 /**
+ * Self-declared and optional. Used for one thing: deciding who may create,
+ * see and join women-only rides. Visible to its owner and to their
+ * institution's administrators, never to other members.
+ */
+export type Gender = "woman" | "man" | "undisclosed";
+
+/**
  * Who someone is to the platform, as opposed to what they are at their
  * institution (`UserType`).
  *
@@ -183,6 +190,8 @@ export type User = {
   /** Approximate home area. Exact address is never collected or stored. */
   areaId: string;
   badgeStatus: BadgeStatus;
+  /** Absent means not stated, which is treated exactly like "undisclosed". */
+  gender?: Gender;
   /** Institutions the user has added beyond their primary one. */
   additionalInstitutionIds: string[];
   /**

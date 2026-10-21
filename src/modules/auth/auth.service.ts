@@ -139,6 +139,7 @@ export async function register(
       institutionId: institution._id,
       campusId: campus._id,
       areaId: new Types.ObjectId(input.areaId),
+      gender: input.gender ?? "undisclosed",
     });
     await existing.save();
   } else {
@@ -151,6 +152,7 @@ export async function register(
       institutionId: institution._id,
       campusId: campus._id,
       areaId: new Types.ObjectId(input.areaId),
+      gender: input.gender ?? "undisclosed",
       badgeStatus: "none",
       role: "member",
     });

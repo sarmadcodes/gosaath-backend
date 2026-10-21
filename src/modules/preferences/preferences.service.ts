@@ -1,5 +1,7 @@
 import { PreferencesModel } from "../../db/models/index.js";
 import type { MatchPreferences } from "../../contract/api.js";
+import { AuthorizationError } from "../../utils/errors.js";
+import { isWomanById, WOMEN_ONLY_REFUSAL } from "../users/gender.js";
 
 /**
  * Matching preferences, owned entirely by the user they belong to.
@@ -35,6 +37,10 @@ export async function updatePreferences(
   userId: string,
   patch: Partial<MatchPreferences>,
 ): Promise<MatchPreferences> {
+  if (patch.womenOnly === true && !(await isWomanById(userId))) {
+    throw new AuthorizationError(WOMEN_ONLY_REFUSAL);
+  }
+
   // Upsert, because the screen writes through on every toggle and the first
   // one must not fail for want of a row. Idempotent by construction: the same
   // toggle sent twice by a retrying client lands on the same value.

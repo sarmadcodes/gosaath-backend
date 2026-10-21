@@ -17,6 +17,7 @@ import {
   UserModel,
 } from "../../db/models/index.js";
 import { contactPhoneFor, toPublicUser } from "../users/user.mapper.js";
+import { isWoman, womenOnlyInEffect } from "../users/gender.js";
 import { notifyQuietly } from "../notifications/notification.service.js";
 import { publishAll } from "../realtime/hub.js";
 import type {
@@ -100,6 +101,24 @@ async function assertCanRequest(
     ],
   });
   if (blocked > 0) throw new NotFoundError("That ride was not found.");
+
+  // A women-only ride is invisible to anybody who has not declared themselves
+  // a woman, so asking for a seat on one gets the same answer as asking for a
+  // ride that does not exist.
+  if (!(await mayJoin(requester, instance.commuteId, driver))) {
+    throw new NotFoundError("That ride was not found.");
+  }
+}
+
+/** Whether this person may take a seat on this commute's rides. */
+async function mayJoin(
+  passenger: { gender?: string | null } | null,
+  commuteId: Types.ObjectId,
+  driver: { gender?: string | null } | null,
+): Promise<boolean> {
+  const commute = await CommuteModel.findById(commuteId).select("womenOnly").lean();
+  if (!commute) return false;
+  return !womenOnlyInEffect(commute, isWoman(driver)) || isWoman(passenger);
 }
 
 /**
@@ -262,6 +281,19 @@ export async function respondToRequest(
 
     const [mapped] = await toSeatRequests([declined as RequestRow], "incoming");
     return mapped!;
+  }
+
+  // Re-checked at the moment of acceptance: the passenger's declaration may
+  // have changed since they asked, and a seat is what the rule protects.
+  const [instance, passenger, driver] = await Promise.all([
+    RideInstanceModel.findById(request.rideInstanceId).select("commuteId").lean(),
+    UserModel.findById(request.requesterId).select("gender").lean(),
+    UserModel.findById(driverId).select("gender").lean(),
+  ]);
+  if (!instance || !(await mayJoin(passenger, instance.commuteId, driver))) {
+    throw new BusinessRuleError(
+      "This is a women-only ride, and this person cannot join it. Nothing was changed.",
+    );
   }
 
   return acceptRequest(driverId, request as RequestRow);

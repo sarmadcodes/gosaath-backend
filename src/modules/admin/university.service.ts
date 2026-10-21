@@ -30,6 +30,8 @@ import { notifyQuietly } from "../notifications/notification.service.js";
 import { logger } from "../../utils/logger.js";
 import { readUrlFor } from "../../services/storage/index.js";
 import { TIMEZONE } from "../../utils/dates.js";
+import { genderOf } from "../users/gender.js";
+import type { Gender } from "../../contract/types.js";
 import { listAudit } from "../audit/audit.service.js";
 import type { FastifyRequest } from "fastify";
 
@@ -271,6 +273,9 @@ export async function getMember(ctx: Ctx, memberId: string) {
 
   return {
     ...row!,
+    // On the detail view only, never in the list or the CSV: it is here so an
+    // admin can correct a mistaken declaration, not to be browsed.
+    gender: genderOf(user),
     commute: commute
       ? {
           intent: commute.intent,
@@ -374,6 +379,36 @@ export async function revealPhone(ctx: Ctx, memberId: string, reason: string) {
   });
 
   return { phone: user.phone };
+}
+
+/**
+ * Corrects a member's declared gender.
+ *
+ * It decides access to women-only rides, so a wrong value is a safety
+ * problem, not a cosmetic one. Audited with the reason only: the value itself
+ * stays out of an append-only log.
+ */
+export async function setMemberGender(
+  ctx: Ctx,
+  memberId: string,
+  gender: Gender,
+  reason: string,
+) {
+  const user = await loadMember(ctx, memberId);
+
+  await UserModel.updateOne({ _id: user._id }, { $set: { gender } });
+
+  await recordAudit({
+    actor: ctx.admin,
+    action: "member.genderCorrected",
+    targetType: "user",
+    targetId: user._id.toString(),
+    institutionId: user.institutionId,
+    metadata: { reason },
+    ...(ctx.request ? { request: ctx.request } : {}),
+  });
+
+  return getMember(ctx, memberId);
 }
 
 // ---------------------------------------------------------------------------

@@ -31,6 +31,7 @@ export const updateMeSchema = z
       .optional(),
     /** Area only. There is no address, latitude or longitude to change. */
     areaId: objectId.optional(),
+    gender: z.enum(["woman", "man", "undisclosed"]).optional(),
     // Photos are set through PUT /me/photo, which takes a key naming
     // something already in our own storage. Accepting a URL here let an
     // account point its photo at any host, which turns every other member's

@@ -102,6 +102,22 @@ export async function universityAdminRoutes(app: FastifyInstance): Promise<void>
     },
   );
 
+  app.post(
+    "/admin/members/:id/gender",
+    { config: { rateLimit: { max: 30, timeWindow: "1 hour" } } },
+    async (request) => {
+      const { id } = idParam.parse(request.params);
+      const { gender, reason } = z
+        .object({
+          gender: z.enum(["woman", "man", "undisclosed"]),
+          reason: z.string().trim().min(5).max(300),
+        })
+        .strict()
+        .parse(request.body);
+      return { data: await uni.setMemberGender(ctx(request), id, gender, reason) };
+    },
+  );
+
   // --- Verification ---------------------------------------------------------
 
   app.get("/admin/verifications", async (request) => {

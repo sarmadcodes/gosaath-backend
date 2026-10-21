@@ -67,6 +67,7 @@ export async function updateMe(
   // change away from letting a validated-but-wider body reach the document.
   if (patch.name !== undefined) user.name = patch.name;
   if (patch.phone !== undefined) user.phone = patch.phone;
+  if (patch.gender !== undefined) user.gender = patch.gender;
 
   if (patch.areaId !== undefined) {
     // Checked, because an unknown area silently breaks matching: the commute
@@ -320,6 +321,7 @@ export async function deleteAccount(
   user.photoUrl = null;
   user.badgeDocumentUrl = null;
   user.badgeStatus = "none";
+  user.gender = "undisclosed";
   user.passwordHash = await hashPassword(randomUUID());
   user.deletedAt = now;
   // The existing lockout: login, refresh and restore all refuse a suspended

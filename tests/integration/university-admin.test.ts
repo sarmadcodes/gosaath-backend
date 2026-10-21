@@ -170,6 +170,15 @@ describe("IDOR: a university admin against another institution", () => {
     expect(response.body).not.toContain("0321");
   });
 
+  it("cannot change the gender of a member of B", async () => {
+    const response = await call("POST", `/admin/members/${memberB.id}/gender`, adminA.access, {
+      gender: "woman",
+      reason: "Trying to reach across",
+    });
+    expect(response.statusCode).toBe(404);
+    expect((await UserModel.findById(memberB.id).lean())?.gender).not.toBe("woman");
+  });
+
   it("cannot edit B's campus", async () => {
     const response = await call("PATCH", `/admin/campuses/${campusB}`, adminA.access, {
       name: "Renamed From Outside",
