@@ -45,8 +45,13 @@ jobs:
         working-directory: gosaath-backend
         run: npm ci
 
+      # Signing key for the test run only, regenerated every run. Locally it
+      # comes from .env, which CI does not have.
+      - name: Throwaway JWT secret
+        run: echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
       # contract:check + typecheck + tests (in-memory MongoDB) + build.
-      # No secrets: tests/setup forces a throwaway database.
+      # No real secrets: tests/setup forces a throwaway database.
       - name: Verify
         working-directory: gosaath-backend
         run: npm run verify
