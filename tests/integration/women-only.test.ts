@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
+import { Types } from "mongoose";
 import { buildApp } from "../../src/app/app.js";
 import { connectToDatabase, disconnectFromDatabase } from "../../src/db/mongodb.js";
 import {
@@ -299,9 +300,30 @@ describe("seeing women-only rides", () => {
     expect(rides.some((r) => r.womenOnly)).toBe(false);
   });
 
-  it("stops applying when the owner changes their declaration", async () => {
-    await api("PATCH", "/me", woman.access, { gender: "undisclosed" });
+  it("cannot be weakened by the owner quietly changing their declaration", async () => {
+    const response = await api("PATCH", "/me", woman.access, { gender: "undisclosed" });
+    expect(response.statusCode).toBe(409);
+    expect(response.body).not.toContain("undisclosed");
+    expect(await searchIds(man)).toEqual([]);
+  });
+
+  it("stops applying once an admin corrects a false declaration", async () => {
+    await UserModel.updateOne({ _id: woman.id }, { $set: { gender: "man" } });
     expect(await searchIds(man)).toEqual([woman.id]);
+  });
+
+  it("fails safe on missing or malformed stored data", async () => {
+    // Stored values the schema would not write today; read as "not a woman".
+    await UserModel.collection.updateOne(
+      { _id: new Types.ObjectId(otherWoman.id) },
+      { $set: { gender: "WOMAN" } },
+    );
+    await UserModel.collection.updateOne(
+      { _id: new Types.ObjectId(unstated.id) },
+      { $unset: { gender: "" } },
+    );
+    expect(await searchIds(otherWoman)).toEqual([]);
+    expect(await searchIds(unstated)).toEqual([]);
   });
 });
 
@@ -340,6 +362,47 @@ describe("joining a women-only ride", () => {
     expect((await RideInstanceModel.findById(rideId).lean())?.seatsTaken).toBe(0);
   });
 
+  it("rejects a request with no session at all", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/rides/${rideId}/request`,
+      payload: { seats: 1 },
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it("still honours a block between two women", async () => {
+    await api("POST", "/safety/blocks", woman.access, { userId: otherWoman.id });
+    const response = await api("POST", `/rides/${rideId}/request`, otherWoman.access, { seats: 1 });
+    expect(response.statusCode).toBe(404);
+    expect(await searchIds(otherWoman)).toEqual([]);
+  });
+
+  it("still never gives out more seats than the ride has", async () => {
+    await RideInstanceModel.updateOne({ _id: rideId }, { $set: { seatsOffered: 1 } });
+    const third = await makeUser("third@szabist.edu.pk", "woman");
+
+    const first = await api("POST", `/rides/${rideId}/request`, otherWoman.access, { seats: 1 });
+    const second = await api("POST", `/rides/${rideId}/request`, third.access, { seats: 1 });
+    const accept = (id: string) =>
+      api("POST", `/requests/${id}/respond`, woman.access, { action: "accept" });
+
+    expect((await accept(first.json().data.id)).statusCode).toBe(200);
+    expect((await accept(second.json().data.id)).statusCode).toBe(409);
+    expect((await RideInstanceModel.findById(rideId).lean())?.seatsTaken).toBe(1);
+  });
+
+  it("does not tell the driver why a request can no longer be accepted", async () => {
+    const asked = await api("POST", `/rides/${rideId}/request`, otherWoman.access, { seats: 1 });
+    await api("PATCH", "/me", otherWoman.access, { gender: "man" });
+
+    const response = await api("POST", `/requests/${asked.json().data.id}/respond`, woman.access, {
+      action: "accept",
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.body.toLowerCase()).not.toMatch(/women|gender|\bman\b/);
+  });
+
   it("still accepts a declared woman", async () => {
     const asked = await api("POST", `/rides/${rideId}/request`, otherWoman.access, { seats: 1 });
     const response = await api("POST", `/requests/${asked.json().data.id}/respond`, woman.access, {
@@ -347,6 +410,66 @@ describe("joining a women-only ride", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json().data.status).toBe("accepted");
+  });
+});
+
+describe("turning the restriction on later", () => {
+  it("is refused while anyone already holds a seat", async () => {
+    const created = await offer(woman, false);
+    const rideId = await nextRideOf(woman);
+    const asked = await api("POST", `/rides/${rideId}/request`, man.access, { seats: 1 });
+    await api("POST", `/requests/${asked.json().data.id}/respond`, woman.access, { action: "accept" });
+
+    const response = await api("PATCH", `/commutes/${created.json().data.id}`, woman.access, {
+      womenOnly: true,
+    });
+    expect(response.statusCode).toBe(409);
+    expect((await CommuteModel.findById(created.json().data.id).lean())?.womenOnly).toBe(false);
+  });
+
+  it("is allowed before anyone is booked", async () => {
+    const created = await offer(woman, false);
+    const response = await api("PATCH", `/commutes/${created.json().data.id}`, woman.access, {
+      womenOnly: true,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(await searchIds(man)).toEqual([]);
+  });
+});
+
+describe("the search filter", () => {
+  beforeEach(async () => {
+    await offer(woman, true);
+    await offer(otherWoman, false);
+  });
+
+  it("treats womenOnly=false as false", async () => {
+    // Someone who can see both kinds of ride, so the filter has work to do.
+    const third = await makeUser("third@szabist.edu.pk", "woman");
+    expect((await searchIds(third)).sort()).toEqual([woman.id, otherWoman.id].sort());
+    expect(await searchIds(third, "?womenOnly=false")).toEqual([otherWoman.id]);
+    expect(await searchIds(third, "?womenOnly=true")).toEqual([woman.id]);
+  });
+
+  it("rejects a value that is not true or false", async () => {
+    const response = await api("GET", "/rides?womenOnly=1", man.access);
+    expect(response.statusCode).toBe(400);
+  });
+});
+
+describe("unrestricted rides", () => {
+  it("still work end to end for everybody", async () => {
+    await offer(man, false);
+    const rideId = await nextRideOf(man);
+    for (const person of [woman, unstated]) {
+      expect(await searchIds(person)).toEqual([man.id]);
+      const asked = await api("POST", `/rides/${rideId}/request`, person.access, { seats: 1 });
+      expect(asked.statusCode).toBe(200);
+      const accepted = await api("POST", `/requests/${asked.json().data.id}/respond`, man.access, {
+        action: "accept",
+      });
+      expect(accepted.json().data.status).toBe("accepted");
+    }
   });
 });
 

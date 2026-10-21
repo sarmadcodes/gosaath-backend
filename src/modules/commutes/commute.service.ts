@@ -289,6 +289,29 @@ export async function updateCommute(
     throw new AuthorizationError(WOMEN_ONLY_REFUSAL);
   }
 
+  // Turning the restriction on cannot reach back over seats already given.
+  // Refused while anyone holds an upcoming seat, rather than checking each
+  // passenger: naming who blocks it would tell the driver a passenger's
+  // declared gender, and cancelling them silently is not this toggle's call.
+  if (patch.womenOnly === true && !commute.womenOnly) {
+    const seated = await AttendanceModel.countDocuments({
+      rideInstanceId: {
+        $in: await RideInstanceModel.find({
+          commuteId: commute._id,
+          date: { $gte: startOfDay(new Date()) },
+          status: { $ne: "cancelled" },
+        }).distinct("_id"),
+      },
+      role: "passenger",
+      status: "confirmed",
+    });
+    if (seated > 0) {
+      throw new BusinessRuleError(
+        "People already have seats on this commute. Women-only can be turned on before anyone is booked, or after those seats are cancelled.",
+      );
+    }
+  }
+
   const scheduleChanged =
     patch.schedule !== undefined &&
     JSON.stringify(patch.schedule) !== JSON.stringify(commute.schedule);

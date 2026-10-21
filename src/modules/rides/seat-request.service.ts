@@ -291,9 +291,9 @@ export async function respondToRequest(
     UserModel.findById(driverId).select("gender").lean(),
   ]);
   if (!instance || !(await mayJoin(passenger, instance.commuteId, driver))) {
-    throw new BusinessRuleError(
-      "This is a women-only ride, and this person cannot join it. Nothing was changed.",
-    );
+    // Deliberately says nothing about why: the reason is the requester's
+    // declared gender, which is theirs, not the driver's, to know.
+    throw new BusinessRuleError("That request can no longer be accepted. Nothing was changed.");
   }
 
   return acceptRequest(driverId, request as RequestRow);

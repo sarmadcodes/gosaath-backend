@@ -67,7 +67,25 @@ export async function updateMe(
   // change away from letting a validated-but-wider body reach the document.
   if (patch.name !== undefined) user.name = patch.name;
   if (patch.phone !== undefined) user.phone = patch.phone;
-  if (patch.gender !== undefined) user.gender = patch.gender;
+  if (patch.gender !== undefined) {
+    // Changing it would silently switch off the women-only commute this
+    // person runs, while their passengers still believe it applies. Asked
+    // to do that deliberately, first.
+    if (
+      patch.gender !== "woman" &&
+      user.gender === "woman" &&
+      (await CommuteModel.exists({
+        ownerId: user._id,
+        womenOnly: true,
+        status: { $ne: "cancelled" },
+      }))
+    ) {
+      throw new BusinessRuleError(
+        "Your commute is women-only. Turn that off before you change this.",
+      );
+    }
+    user.gender = patch.gender;
+  }
 
   if (patch.areaId !== undefined) {
     // Checked, because an unknown area silently breaks matching: the commute

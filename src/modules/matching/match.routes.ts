@@ -57,7 +57,12 @@ export async function matchRoutes(app: FastifyInstance): Promise<void> {
         day: weekday.optional(),
         time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
         vehicleType: z.enum(["car", "bike"]).optional(),
-        womenOnly: z.coerce.boolean().optional(),
+        // Not z.coerce.boolean(): that is Boolean("false"), which is true, so
+        // asking to exclude women-only rides returned only women-only rides.
+        womenOnly: z
+          .enum(["true", "false"])
+          .transform((value) => value === "true")
+          .optional(),
       })
       .strict()
       .parse(request.query);
