@@ -24,12 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
           path: gosaath-backend
 
       # The app repo may be private, in which case GITHUB_TOKEN cannot read
       # it; add a read-only token as GOSAATH_REPO_TOKEN.
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
           repository: sarmadcodes/gosaath
           ref: main
           path: gosaath
